@@ -1,0 +1,68 @@
+MA SOI ONLINE - FINAL RULESET 2026-09-13
+========================================
+
+1. Night / Intro
+- Host starts game: Night screen + night.mp3 immediately.
+- Intro only once before Night 1: 8s intro + 2s pause. Night timer does not run during intro.
+- Night 1 after intro and every later night: one continuous 60 -> 0 timer.
+- 60 -> 11: 50s main action window.
+- 10 -> 1: main actions locked; Witch Save popup if applicable; night still continues to 0.
+- At 0: resolve wolf bite / guard / save / poison / lover deaths / Hunter.
+
+2. Day
+- day.mp3 plays once on entering day; discussion is silent after it finishes.
+- Discussion time by alive count: 1-6=90s, 7-8=120s, 9-10=150s, 11-15=180s.
+- Day vote: 30s; unique top and >50% of aliveCount-1 required; exactly 50% survives.
+
+3. Select / unselect
+- Wolf bite vote: select, tap again to unselect, change target until lock.
+- Guard: select, tap again to unselect, change target until lock.
+- Cupid: select/unselect/change two targets during first 15s of Night 1; locks at timeout.
+- Witch Poison: select/unselect/change until 10s remain; no selection means potion remains.
+- Day Vote: select, tap again to unselect, change until vote ends.
+- Seer is the exception: tap a target = inspect immediately; exactly once per night; no confirm.
+
+4. Roles
+- Seer result: only plain Villager => THIEN; every other role => KHONG RO.
+- Guard can self-protect; cannot protect same target two consecutive nights.
+- Cupid can choose Cupid themself as one half; two targets must be different.
+- Witch cannot poison themself. Save and Poison can both be used in the same night if available.
+- Hunter valid in-game death => 15s revenge; voluntary leave/kick => no revenge. Cannot shoot self or living lover.
+- Wolves: unique top and >50% of living wolves required; tie/no majority => no bite.
+
+5. Couple
+- When Cupid locks the pair in Night 1, only the two lovers see flying-heart effect for the rest of Night 1.
+- Reconnect during Night 1 restores the heart effect.
+- Cupid pairing does NOT play wedding.mp3.
+- wedding.mp3 plays only when Couple wins.
+- If one lover dies, the other dies from love.
+- While a living Couple exists, normal Village/Wolf win is blocked; exactly the two lovers alive => Couple wins.
+
+6. Test Bot
+- Same game engine/rules as normal play; Bot mode is not a separate ruleset.
+- Host can choose total table size and roles for real human players; Bots fill remaining seats.
+- In TEST BOT, Host sees every player/Bot role directly on player cards and can observe all actions.
+- After a test game ends: show result/all roles, wait about 5s, return Lobby, remove old Bots, keep connected humans.
+- TEST BOT remains ON and keeps its table/role config for quick retest.
+- Stopping a test round returns to Lobby and removes Bots, but TEST BOT stays ON.
+- Turning TEST BOT OFF in Lobby returns to normal human game.
+
+7. Audio
+- Name entry: silence.
+- Lobby: lobby.mp3 loop.
+- Intro + night: night.mp3.
+- Enter day: day.mp3 once; then discussion silent.
+- Day vote: dayVote.mp3.
+- Hunter shot: bow.mp3 once as SFX.
+- Couple win only: wedding.mp3.
+
+8. Reconnect / Reset
+- Involuntary disconnect does not kill; reconnect restores role/state/history/lover.
+- Voluntary leave kills the alive player and lover cascade applies; Hunter who voluntarily leaves does not shoot.
+- Daily reset uses Asia/Ho_Chi_Minh day boundary; no long-term game state storage.
+
+Files in this archive:
+- server-unified.js : final unified server/game rules.
+- test-ui-proxy.js  : Test Bot Host view + role badges + observer + Couple heart UI.
+- package.json      : runtime dependency metadata.
+- scripts/build-unified-server.js : idempotent finalizer/check helper.
