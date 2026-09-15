@@ -53,3 +53,15 @@ if(!src.includes(MARK)){
   fs.writeFileSync(SERVER,patch(src),'utf8');
   console.log('[CONSENT PATCH] server-unified.js patched');
 }else console.log('[CONSENT PATCH] server-unified.js already patched');
+
+/* TEST BOT metadata fix: keep the real-human list separate from room.players so
+   adding Bots does not mutate humans.length used by testRoleMap.humanCount. */
+const HUMAN_FIX_MARK='// TEST BOT HUMAN COUNT FIX 2026-09-15';
+let __humanFixSrc=fs.readFileSync(SERVER,'utf8');
+if(!__humanFixSrc.includes(HUMAN_FIX_MARK)){
+  const __humanAssign=/room\.players\s*=\s*humans\s*;/;
+  if(!__humanAssign.test(__humanFixSrc)) throw new Error('[CONSENT PATCH] missing human-count anchor');
+  __humanFixSrc=__humanFixSrc.replace(__humanAssign,`room.players = [...humans];\n            ${HUMAN_FIX_MARK}`);
+  fs.writeFileSync(SERVER,__humanFixSrc,'utf8');
+  console.log('[CONSENT PATCH] TEST BOT humanCount metadata fixed');
+}else console.log('[CONSENT PATCH] TEST BOT humanCount metadata already fixed');
