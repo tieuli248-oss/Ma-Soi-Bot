@@ -1,0 +1,22 @@
+name: Live Normal Game QA
+
+on:
+  push:
+    branches:
+      - qa-live-normal
+
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install Playwright
+        run: npm install --no-save playwright@1.55.0
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run normal-game multi-browser QA
+        run: node scripts/live-normal-qa.mjs
