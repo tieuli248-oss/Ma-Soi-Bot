@@ -14,9 +14,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Install Playwright
-        run: npm install --no-save playwright@1.55.0
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Prepare isolated Playwright runtime
+        run: |
+          mkdir -p /tmp/liveqa
+          cd /tmp/liveqa
+          npm init -y
+          npm install playwright@1.55.0
+          npx playwright install --with-deps chromium
+          cp "$GITHUB_WORKSPACE/scripts/live-normal-qa.mjs" ./live-normal-qa.mjs
       - name: Run normal-game multi-browser QA
-        run: node scripts/live-normal-qa.mjs
+        run: |
+          cd /tmp/liveqa
+          node live-normal-qa.mjs
