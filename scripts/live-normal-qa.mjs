@@ -17,7 +17,6 @@ const result = {
 };
 
 function log(...a){ console.log('[QA]',...a); }
-async function isActive(page,id){ return await page.locator(id).evaluate(el=>el.classList.contains('active')).catch(()=>false); }
 async function readText(page,sel){ return (await page.locator(sel).textContent().catch(()=>''))?.trim()||''; }
 async function timer(page){ const t=Number(await readText(page,'#gameTimerNumber')); return Number.isFinite(t)?t:null; }
 async function phase(page){ return await readText(page,'#gamePhaseName'); }
@@ -62,7 +61,6 @@ try{
   await Promise.all(pages.map(p=>p.goto(URL,{waitUntil:'domcontentloaded',timeout:60000})));
   log('all pages loaded');
 
-  // Host enters first so this is a normal real-player room, not TEST BOT.
   await pages[0].fill('#playerName',names[0]);
   await pages[0].click('#enterBtn');
   await pages[0].waitForFunction(()=>document.querySelector('#lobbyScreen')?.classList.contains('active'),null,{timeout:30000});
@@ -77,16 +75,16 @@ try{
   }));
   log('all 7 real browser clients entered');
 
-  await pages[0].waitForFunction(()=>Number(document.querySelector('#playerCount')?.textContent||0)===7,null,{timeout:30000});
+  // playerCount displays MEMBERS only (Host is shown separately), so 7 total => 6 members.
+  await pages[0].waitForFunction(expected=>Number(document.querySelector('#playerCount')?.textContent||0)===expected,N-1,{timeout:30000});
+  log('host sees 6 members + host = 7 real players');
 
-  // Members ready normally.
   await Promise.all(pages.slice(1).map(async p=>{
     await p.locator('#readyBtn').waitFor({state:'visible',timeout:30000});
     await p.click('#readyBtn');
   }));
   await sleep(1200);
 
-  // No TEST BOT at any point.
   if(await pages[0].locator('#hostChooseRole').isChecked().catch(()=>false)) throw new Error('TEST BOT became enabled unexpectedly');
   await pages[0].locator('#startBtn').waitFor({state:'visible',timeout:30000});
   await pages[0].click('#startBtn');
@@ -104,11 +102,10 @@ try{
   result.wolves.count=wolfIndexes.length;
   if(witchIndex<0) result.errors.push('No Witch found in 7-player normal composition');
 
-  // Wait until Night 1 is truly active and timer is in main-action window.
   await pages[0].waitForFunction(()=>{
-    const phase=(document.querySelector('#gamePhaseName')?.textContent||'').trim();
+    const ph=(document.querySelector('#gamePhaseName')?.textContent||'').trim();
     const t=Number(document.querySelector('#gameTimerNumber')?.textContent||0);
-    return phase.includes('BAN ĐÊM') && t>15;
+    return ph.includes('BAN ĐÊM') && t>15;
   },null,{timeout:90000});
 
   result.timer.maxNightSpread=await sampleTimers(pages,result.timer.nightSamples,'NIGHT',12,400);
@@ -135,7 +132,6 @@ try{
     log('witch poison cases',JSON.stringify(result.witch));
   }
 
-  // Make the real wolves vote the same non-wolf target, guaranteeing a rescue candidate.
   if(wolfIndexes.length){
     const avoid=new Set(wolfIndexes);
     if(witchIndex>=0) avoid.add(witchIndex);
@@ -152,7 +148,6 @@ try{
     log('wolves voted target',targetName);
   }
 
-  // Timer around the 10-second Witch boundary — the critical old PC/mobile mismatch point.
   await pages[0].waitForFunction(()=>Number(document.querySelector('#gameTimerNumber')?.textContent||99)<=12,null,{timeout:70000});
   const boundarySpread=await sampleTimers(pages,result.timer.nightSamples,'NIGHT-BOUNDARY',8,350);
   result.timer.maxNightSpread=Math.max(result.timer.maxNightSpread||0,boundarySpread||0);
@@ -173,7 +168,6 @@ try{
     }
   }
 
-  // Day discussion sync check.
   try{
     await pages[0].waitForFunction(()=>((document.querySelector('#gamePhaseName')?.textContent||'').includes('THẢO LUẬN')),null,{timeout:50000});
     result.timer.maxDaySpread=await sampleTimers(pages,result.timer.daySamples,'DAY',8,400);
