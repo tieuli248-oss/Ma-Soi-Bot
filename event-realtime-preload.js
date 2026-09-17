@@ -67,7 +67,67 @@ if (!global.__MASOI_EVENT_REALTIME_PRELOAD__) {
             source = source.slice(0, voluntaryStart) + voluntaryBlock + source.slice(disconnectStart);
         }
 
-        console.log("[LEAVE PATCH] voluntary leave = death; disconnect = reconnectable; phase timer preserved");
+        // If the last connected real human deliberately leaves, a bot-only room
+        // must never keep playing by itself. Stop timers, clear every bot and
+        // return to a clean lobby immediately.
+        source = source.replace(
+            `        player.connected =
+            false;
+
+        // Host is transferred immediately to another connected player.`,
+            `        player.connected =
+            false;
+
+        const connectedRealHumans = room.players.filter(
+            p =>
+                p.isBot !== true &&
+                p.connected === true &&
+                p.leftGame !== true
+        );
+
+        if (connectedRealHumans.length === 0) {
+            stopTimer();
+            stopGamePlayClock();
+
+            if (room.leaveHunterRevenge?.clear) {
+                room.leaveHunterRevenge.clear();
+            }
+
+            const noHumanMessage =
+                "♻️ Không còn người chơi thật trong phòng. Ván đã dừng và Bot đã được xóa.";
+
+            addLog(noHumanMessage);
+            addAdminLog("AUTO RESET: người chơi thật cuối cùng đã rời phòng.");
+
+            io.emit("gameAutoReset", {
+                reason: "noRealHuman",
+                message: noHumanMessage
+            });
+
+            room.players = [];
+            room.hostId = null;
+            room.testMode = false;
+            room.testConfig = null;
+            room.testHumanId = null;
+            room.testRoleAssignments = {};
+            room.testBotWolfNight = null;
+            room.testBotWolfTargetId = null;
+
+            if (typeof serverTestConsentEmpty === "function") {
+                room.testConsent = serverTestConsentEmpty();
+            }
+
+            resetRoom("AUTO RESET TO LOBBY: không còn người chơi thật.");
+            room.targetPlayerCount = MIN_PLAYERS;
+            emitRoom();
+            sendAdminState();
+            return;
+        }
+
+        // Host is transferred immediately to another connected player.`
+        );
+
+        console.log("[LEAVE PATCH] voluntary leave = death; last human leaves = reset; disconnect = reconnectable");
         return module._compile(source, filename);
     };
 
