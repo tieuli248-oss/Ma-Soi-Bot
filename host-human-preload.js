@@ -38,6 +38,16 @@ if (!global.__MASOI_HUMAN_HOST_PRELOAD__) {
             console.error("[PERF PATCH] failed", err);
         }
 
+        // Suppress repeated state packets from Test Bot/live bot tickers when
+        // nothing visible actually changed. This avoids frontend DOM rebuilds.
+        try {
+            const { patchUiStateDedupe } = require("./ui-state-dedupe-preload.js");
+            source = patchUiStateDedupe(source);
+            console.log("[UI STATE DEDUPE] runtime patch enabled");
+        } catch (err) {
+            console.error("[UI STATE DEDUPE] failed", err);
+        }
+
         const originalChooseHost = `function chooseHost() {\n\n    room.hostId =\n        room.players.find(\n            p =>\n                p.connected\n        )?.id ||\n        null;\n\n}`;
 
         const humanOnlyChooseHost = `function chooseHost() {\n\n    // Bot tuyệt đối không được làm Host.\n    // Chỉ chuyển Host cho người thật còn kết nối.\n    const nextHost =\n        room.players.find(\n            p =>\n                p.connected &&\n                p.isBot !== true\n        ) ||\n        null;\n\n    room.hostId =\n        nextHost?.id ||\n        null;\n\n    return room.hostId;\n\n}`;
