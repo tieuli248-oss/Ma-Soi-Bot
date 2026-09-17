@@ -17,6 +17,17 @@ if (!global.__MASOI_HUMAN_HOST_PRELOAD__) {
 
         let source = fs.readFileSync(filename, "utf8");
 
+        // Apply the isolated AI patch here, after the existing fs preloads
+        // (autofill + AI chat) have already transformed server-unified.js.
+        // This deliberately leaves timers, roles, audio, reconnect and admin logic untouched.
+        try {
+            const { patchSmartAI } = require("./smart-ai-runtime-preload.js");
+            source = patchSmartAI(source);
+            console.log("[SMART AI PATCH] chat leak filter + fair bot vote enabled");
+        } catch (err) {
+            console.error("[SMART AI PATCH] failed", err);
+        }
+
         const originalChooseHost = `function chooseHost() {\n\n    room.hostId =\n        room.players.find(\n            p =>\n                p.connected\n        )?.id ||\n        null;\n\n}`;
 
         const humanOnlyChooseHost = `function chooseHost() {\n\n    // Bot tuyệt đối không được làm Host.\n    // Chỉ chuyển Host cho người thật còn kết nối.\n    const nextHost =\n        room.players.find(\n            p =>\n                p.connected &&\n                p.isBot !== true\n        ) ||\n        null;\n\n    room.hostId =\n        nextHost?.id ||\n        null;\n\n    return room.hostId;\n\n}`;
