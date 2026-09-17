@@ -39,6 +39,13 @@ function patchRuntime(src) {
     );
   }
 
+  // 5) Witch poison only: accept selection throughout the authoritative first 50s.
+  // Do not let a stale witchActionOpen flag block poison before the save window.
+  const witchPoisonGate = `                if (\n                    room.phase !== "night" ||\n                    !room.night?.witchPoisonWindowOpen ||\n                    room.night?.witchActionOpen\n                ) {\n                    return;\n                }`;
+  if (src.includes(witchPoisonGate) && !src.includes('WITCH_POISON_FIRST_50S_GATE')) {
+    src = src.replace(witchPoisonGate, `                /* WITCH_POISON_FIRST_50S_GATE */\n                if (\n                    room.phase !== "night" ||\n                    !room.night ||\n                    room.night.mainActionsOpen !== true ||\n                    !room.night.mainActionEndsAt ||\n                    Date.now() >= room.night.mainActionEndsAt\n                ) {\n                    return;\n                }`);
+  }
+
   return src;
 }
 
