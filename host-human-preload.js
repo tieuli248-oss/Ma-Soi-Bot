@@ -28,6 +28,16 @@ if (!global.__MASOI_HUMAN_HOST_PRELOAD__) {
             console.error("[SMART AI PATCH] failed", err);
         }
 
+        // Keep timer ticks lightweight on slow phones / unstable connections.
+        // Stale countdown packets may be dropped; every payload still carries endsAt.
+        try {
+            const { patchPerformance } = require("./perf-preload.js");
+            source = patchPerformance(source);
+            console.log("[PERF PATCH] phaseTimer uses volatile realtime ticks");
+        } catch (err) {
+            console.error("[PERF PATCH] failed", err);
+        }
+
         const originalChooseHost = `function chooseHost() {\n\n    room.hostId =\n        room.players.find(\n            p =>\n                p.connected\n        )?.id ||\n        null;\n\n}`;
 
         const humanOnlyChooseHost = `function chooseHost() {\n\n    // Bot tuyệt đối không được làm Host.\n    // Chỉ chuyển Host cho người thật còn kết nối.\n    const nextHost =\n        room.players.find(\n            p =>\n                p.connected &&\n                p.isBot !== true\n        ) ||\n        null;\n\n    room.hostId =\n        nextHost?.id ||\n        null;\n\n    return room.hostId;\n\n}`;
