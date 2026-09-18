@@ -149,6 +149,13 @@ ${countBlock}`
             'if (!(room.testMode || hasLiveAutoFillBots()) || !room.started || room.phase !== "night" || !room.night) return;'
         );
 
+        // Witch poison now runs in parallel with the other first-50s night actions.
+        // Do not let witchActionOpen pause live/test bot wolves, guards or seers.
+        source = source.replace(
+            'if (!room.night.witchActionOpen) {',
+            'if (room.night.mainActionsOpen) {'
+        );
+
         source = source.replace(
             'if (!room.testMode || !room.started || room.phase !== "dayVote") return;',
             'if (!(room.testMode || hasLiveAutoFillBots()) || !room.started || room.phase !== "dayVote") return;'
