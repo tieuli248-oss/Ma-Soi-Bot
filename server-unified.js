@@ -1352,7 +1352,7 @@ function sendWolfVoteState() {
     if (
         !room.night ||
         room.phase !== "night" ||
-        room.night.witchActionOpen
+        !room.night.mainActionsOpen
     ) {
 
         return;
