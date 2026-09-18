@@ -383,6 +383,58 @@ function botStrategyHunterTarget(bot, candidates) {
                     : botStrategyWolfTarget(botWolves[0], wolfCandidates);`
         );
 
+        // Live mixed wolf pack: do not cache a bot-chosen target for the whole night.
+        // Re-evaluate current HUMAN wolf votes on every bot tick so bots immediately
+        // follow the current human majority. A human tie clears bot wolf votes.
+        source = source.replace(
+            `            if (room.testBotWolfNight !== room.nightNumber || !findPlayer(room.testBotWolfTargetId)?.alive) {
+                const preferred = host?.alive && host.role !== "Sói" ? host : null;
+                const target = room.testMode
+                    ? chooseTestBotTarget(wolfCandidates, preferred, 0.35)
+                    : botStrategyWolfTarget(botWolves[0], wolfCandidates);
+                room.testBotWolfNight = room.nightNumber;
+                room.testBotWolfTargetId = target?.id || null;
+            }`,
+            `            if (!room.testMode) {
+                const humanWolves = room.players.filter(p => !p.isBot && p.alive && p.role === "Sói");
+                const humanVotes = humanWolves
+                    .map(p => room.night.wolfVotes.get(p.id))
+                    .filter(id => wolfCandidates.some(x => x.id === id));
+
+                if (humanVotes.length) {
+                    const counts = new Map();
+                    for (const id of humanVotes) counts.set(id, (counts.get(id) || 0) + 1);
+                    let bestId = null, bestCount = 0, tied = false;
+                    for (const [id, count] of counts) {
+                        if (count > bestCount) { bestId = id; bestCount = count; tied = false; }
+                        else if (count === bestCount) tied = true;
+                    }
+                    room.testBotWolfTargetId = tied ? null : bestId;
+                    if (tied) {
+                        for (const wolf of botWolves) room.night.wolfVotes.delete(wolf.id);
+                    }
+                } else if (humanWolves.length) {
+                    room.testBotWolfTargetId = null;
+                    for (const wolf of botWolves) room.night.wolfVotes.delete(wolf.id);
+                } else if (
+                    room.testBotWolfNight !== room.nightNumber ||
+                    !findPlayer(room.testBotWolfTargetId)?.alive
+                ) {
+                    const target = botStrategyWolfTarget(botWolves[0], wolfCandidates);
+                    room.testBotWolfTargetId = target?.id || null;
+                }
+                room.testBotWolfNight = room.nightNumber;
+            } else if (
+                room.testBotWolfNight !== room.nightNumber ||
+                !findPlayer(room.testBotWolfTargetId)?.alive
+            ) {
+                const preferred = host?.alive && host.role !== "Sói" ? host : null;
+                const target = chooseTestBotTarget(wolfCandidates, preferred, 0.35);
+                room.testBotWolfNight = room.nightNumber;
+                room.testBotWolfTargetId = target?.id || null;
+            }`
+        );
+
         source = source.replace(
             `const target = chooseTestBotTarget(candidates, room.testMode && host?.alive ? host : null, 0.25);`,
             `const target = room.testMode
