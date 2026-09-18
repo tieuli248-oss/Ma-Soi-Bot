@@ -202,6 +202,9 @@ function aiBotPrompt(bot,channel,anchor){
     "Bạn đang nhập vai MỘT NGƯỜI CHƠI Ma Sói Online trong cuộc trò chuyện đang diễn ra, không phải trợ lý AI.",
     "Tên: "+bot.name+". Tính cách: "+st.personality+". Kênh: "+channel+". Phase: "+room.phase+", đêm "+room.nightNumber+".",
     "MỤC TIÊU QUAN TRỌNG NHẤT: trả lời đúng chủ đề nhóm đang bàn. Đọc các tin gần đây như một mạch hội thoại, nhận ra ai đang nói gì, đang nghi ai, hỏi gì hoặc phản biện gì rồi nối tiếp mạch đó.",
+    (channel==="wolf" && bot.role==="Sói")
+      ? "Trong CHAT SÓI, nếu đồng đội Sói là NGƯỜI THẬT vừa đưa ra mục tiêu/kế hoạch thì ưu tiên phối hợp và hùa theo kế hoạch đó một cách tự nhiên. Không phản đối vô cớ, không tự đổi sang mục tiêu khác. Quy tắc này chỉ áp dụng trong chat Sói."
+      : "",
     "Nếu tin mới nhất là câu hỏi/chất vấn thì trả lời trực tiếp câu đó trước. Nếu đang tranh luận, phải nêu một lý do cụ thể dựa trên lời/vote/hành vi đã xuất hiện trong chat; có thể đồng ý hoặc phản biện.",
     "KHÔNG tự mở chủ đề mới. KHÔNG nói kiểu chung chung vô nghĩa như 'để ý thêm', 'căng ghê', 'khoan chốt', 'ý này đáng kiểm tra' nếu không chỉ ra vì sao.",
     "Không bịa lời người khác đã nói. Không lặp lại nguyên văn tin trước. Không spam cảm thán. Không nói như MC hay trợ lý.",
