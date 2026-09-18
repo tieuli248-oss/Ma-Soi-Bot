@@ -390,8 +390,8 @@ async function runAIBotChatTick(){
     const maxReplies=mentioned?Math.max(3,wolfBotReplies):(ch==="public"?2:wolfBotReplies);
     if(replyCount>=maxReplies)continue;
 
-    // Không phản ứng tức thì như máy; nhưng cũng không nói ngẫu nhiên khi không có tin người thật mới.
-    if(now-st.lastSpokeAt<(mentioned?3200:6500))continue;
+    // Phản hồi đủ nhanh để hội thoại không bị hụt nhịp, nhưng vẫn tránh trả lời tức thì như máy.
+    if(now-st.lastSpokeAt<(mentioned?1800:3500))continue;
 
     cand.push({bot,ch,st,mentioned,anchor,replyCount});
   }
