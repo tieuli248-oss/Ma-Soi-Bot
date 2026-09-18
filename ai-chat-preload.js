@@ -384,7 +384,10 @@ async function runAIBotChatTick(){
 
     const mentioned=aiBotWasMentioned(bot,hist);
     const replyCount=aiBotAnchorReplyCounts.get(anchor.historyId)||0;
-    const maxReplies=mentioned?3:(ch==="public"?2:1);
+    const wolfBotReplies = ch==="wolf"
+      ? room.players.filter(p=>p.isBot&&p.alive&&p.role==="Sói").length
+      : 1;
+    const maxReplies=mentioned?Math.max(3,wolfBotReplies):(ch==="public"?2:wolfBotReplies);
     if(replyCount>=maxReplies)continue;
 
     // Không phản ứng tức thì như máy; nhưng cũng không nói ngẫu nhiên khi không có tin người thật mới.
@@ -415,12 +418,12 @@ async function runAIBotChatTick(){
     const ch=cur?aiBotChannel(cur):null;
     if(!cur||!ch)return;
 
-    // Đánh dấu đã xử lý tin người thật này kể cả provider lỗi, tránh gọi API lặp vô hạn.
-    x.st.lastReactedHumanHistoryId=x.anchor.historyId;
-    x.st.lastSpokeAt=Date.now();
-
+    // Chỉ đánh dấu đã phản hồi khi provider thực sự trả về nội dung.
+    // Nếu provider tạm lỗi/rỗng, bot còn cơ hội thử lại thay vì im luôn.
     if(!r.text)return;
 
+    x.st.lastReactedHumanHistoryId=x.anchor.historyId;
+    x.st.lastSpokeAt=Date.now();
     aiBotEmit(cur,ch,r.text);
     x.st.lastProvider=r.provider;
     x.st.phaseCount++;
