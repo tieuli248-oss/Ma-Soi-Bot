@@ -230,7 +230,7 @@ function botStrategySuspicionScore(bot, target) {
 function botStrategyInfluenceScore(target) {
     if (!target?.alive) return -9999;
     const chat = botStrategyRecentPublicChat(56);
-    let score = target.isBot ? 0 : 0.8;
+    let score = 0; // Human and bot targets start equally; behavior decides influence.
     score += Math.min(3.2, chat.filter(x => x.playerId === target.id).length * 0.22);
 
     const name = botStrategyNorm(target.name);
