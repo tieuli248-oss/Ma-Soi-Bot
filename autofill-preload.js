@@ -278,6 +278,17 @@ function botStrategyWolfTarget(bot, candidates) {
     const valid = (candidates || []).filter(p => p?.alive && p.role !== "Sói");
     if (!valid.length) return null;
 
+    // In a live mixed wolf pack, human wolf leads the night kill.
+    // Bot wolves mirror the human wolf's current valid vote; otherwise use strategy.
+    if (!room.testMode && room.night?.wolfVotes) {
+        const humanWolves = room.players.filter(p => !p.isBot && p.alive && p.role === "Sói");
+        for (const humanWolf of humanWolves) {
+            const humanTargetId = room.night.wolfVotes.get(humanWolf.id);
+            const humanTarget = valid.find(p => p.id === humanTargetId);
+            if (humanTarget) return humanTarget;
+        }
+    }
+
     // Kill people who are driving the village discussion or publicly pressuring
     // wolves. Lovers get a large strategic penalty/bonus depending on relation.
     return botStrategyPickHighest(valid, p => {
