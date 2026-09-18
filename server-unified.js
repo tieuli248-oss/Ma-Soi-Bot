@@ -5731,14 +5731,19 @@ io.on(
             "witchSave",
             () => {
 
+                // WITCH SAVE: accept during the authoritative final 10s of night.
+                // Do not depend on a transient UI/action-mode flag.
                 if (
                     room.phase !== "night" ||
-                    !room.night?.witchActionOpen ||
-                    room.night?.witchActionMode !== "save"
+                    !room.night ||
+                    room.night.mainActionsOpen !== false ||
+                    !room.timerEndsAt ||
+                    Date.now() >= room.timerEndsAt
                 ) {
-
+                    socket.emit("actionError", {
+                        message: "Bình cứu chỉ dùng được trong 10 giây cuối của đêm."
+                    });
                     return;
-
                 }
 
                 const witch =
@@ -5836,11 +5841,18 @@ io.on(
             "witchPoison",
             data => {
 
+                // WITCH POISON: accept throughout the authoritative first 50s.
+                // Use the night action deadline directly instead of transient flags.
                 if (
                     room.phase !== "night" ||
-                    !room.night?.witchPoisonWindowOpen ||
-                    room.night?.witchActionOpen
+                    !room.night ||
+                    room.night.mainActionsOpen !== true ||
+                    !room.night.mainActionEndsAt ||
+                    Date.now() >= room.night.mainActionEndsAt
                 ) {
+                    socket.emit("actionError", {
+                        message: "Bình độc chỉ chọn được trong 50 giây đầu của đêm."
+                    });
                     return;
                 }
 
