@@ -2536,6 +2536,12 @@ function startWitchPoisonAction() {
 
     if (room.phase !== "night" || !room.night) return;
 
+    // Keep the poison phase explicit for clients and reconnect logic.
+    // Poison still runs in parallel with all other main night actions.
+    room.night.witchActionOpen = true;
+    room.night.witchActionMode = "poison";
+    room.night.witchActionResolved = false;
+
     room.night.witchPoisonWindowOpen = true;
     room.night.witchPoisonEndsAt =
         Date.now() + TIME.witchPoison * 1000;
