@@ -278,14 +278,32 @@ function botStrategyWolfTarget(bot, candidates) {
     const valid = (candidates || []).filter(p => p?.alive && p.role !== "Sói");
     if (!valid.length) return null;
 
-    // In a live mixed wolf pack, human wolf leads the night kill.
-    // Bot wolves mirror the human wolf's current valid vote; otherwise use strategy.
+    // In a live mixed wolf pack, human wolves decide the night kill.
+    // Bot wolves follow the strict majority of CURRENT human-wolf votes.
+    // If human votes are tied, bots do not break the tie themselves.
     if (!room.testMode && room.night?.wolfVotes) {
         const humanWolves = room.players.filter(p => !p.isBot && p.alive && p.role === "Sói");
+        const humanVoteCounts = new Map();
         for (const humanWolf of humanWolves) {
-            const humanTargetId = room.night.wolfVotes.get(humanWolf.id);
-            const humanTarget = valid.find(p => p.id === humanTargetId);
-            if (humanTarget) return humanTarget;
+            const targetId = room.night.wolfVotes.get(humanWolf.id);
+            if (!valid.some(p => p.id === targetId)) continue;
+            humanVoteCounts.set(targetId, (humanVoteCounts.get(targetId) || 0) + 1);
+        }
+        if (humanVoteCounts.size) {
+            let bestTargetId = null;
+            let bestCount = 0;
+            let tied = false;
+            for (const [targetId, count] of humanVoteCounts.entries()) {
+                if (count > bestCount) {
+                    bestTargetId = targetId;
+                    bestCount = count;
+                    tied = false;
+                } else if (count === bestCount) {
+                    tied = true;
+                }
+            }
+            if (tied) return null;
+            return valid.find(p => p.id === bestTargetId) || null;
         }
     }
 
