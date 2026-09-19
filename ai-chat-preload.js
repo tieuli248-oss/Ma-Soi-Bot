@@ -302,10 +302,12 @@ function aiBotClean(raw){
   if(t.length>AI_BOT_CONFIG.maxReplyChars)t=t.slice(0,AI_BOT_CONFIG.maxReplyChars).trim();
   if(!t||/^(assistant|system|bot)\\s*:/i.test(t))return "";
   // Chặn prompt/chỉ dẫn nội bộ hoặc câu trả lời bị lọt tiếng Anh thay vì phát ra chat.
-  if(/\\b(we need to|we should|respond as|answer directly|the last message|assistant|system prompt|developer|instruction|state:)\\b/i.test(t))return "";
+  if(/\\b(we need to|we should|respond as|answer directly|the last message|assistant|system prompt|developer|instruction|state:|the user is|the user|i['’]?m bot|i am bot|werewolf game|villager|coupled with|day ?\\d|dayspeech|night ?\\d)\\b/i.test(t))return "";
   const asciiWords=(t.match(/\\b[a-z]{3,}\\b/gi)||[]).filter(w=>!/^(bot|vote|chat|game|online)$/i.test(w));
   const viMarks=(t.match(/[ăâđêôơưáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ]/gi)||[]).length;
-  if(asciiWords.length>=4 && viMarks===0)return "";
+  // Nội dung chat của bot phải là tiếng Việt. Cho phép vài từ game quen thuộc,
+  // nhưng loại cả câu tiếng Anh thuần lẫn tiếng Anh trộn vài tên/vai tiếng Việt.
+  if(asciiWords.length>=4 && (viMarks===0 || asciiWords.length>=8))return "";
   if(/^(chết rồi mà|tui vẫn ở đây|khoan chốt vội|tui chưa chốt nghi ai)[.! ]*$/i.test(t))return "";
   return t;
 }
