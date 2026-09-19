@@ -53,13 +53,50 @@ function addLiveAutoFillBots(targetCount) {
     let added = 0;
     const botsNeeded = Math.max(0, target - room.players.length);
 
+    // Tên bot ngẫu nhiên, không trùng người chơi hiện có và không trùng bot trong cùng ván.
+    const botNamePool = [
+        "An", "Anh", "Bảo", "Bình", "Châu", "Chi", "Duy", "Giang",
+        "Hà", "Hân", "Hạnh", "Hiếu", "Hoài", "Huy", "Khánh", "Khoa",
+        "Lâm", "Lan", "Linh", "Long", "Mai", "Minh", "My", "Nam",
+        "Ngân", "Ngọc", "Nhi", "Như", "Phúc", "Phương", "Quân", "Quỳnh",
+        "Sơn", "Tâm", "Thảo", "Thiên", "Thư", "Trang", "Trâm", "Trinh",
+        "Trung", "Tuấn", "Tú", "Uyên", "Vi", "Việt", "Vy", "Yến"
+    ];
+
+    const normalizeBotName = value =>
+        String(value || "").trim().toLocaleLowerCase("vi-VN");
+
+    const usedNames = new Set(
+        room.players.map(p => normalizeBotName(p.name))
+    );
+
+    const availableNames = botNamePool.filter(
+        name => !usedNames.has(normalizeBotName(name))
+    );
+
+    // Xáo trộn mỗi lần bắt đầu ván để tên bot thay đổi ngẫu nhiên.
+    for (let i = availableNames.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [availableNames[i], availableNames[j]] = [availableNames[j], availableNames[i]];
+    }
+
     for (let i = 1; i <= botsNeeded; i++) {
         const bot = testBotPlayer(i);
         bot.autoFillBot = true;
         bot.testBot = false;
         bot.ready = true;
         bot.connected = true;
-        bot.name = "🤖 Bot " + String(i).padStart(2, "0");
+
+        let botName = availableNames.shift();
+        if (!botName) {
+            let suffix = 1;
+            do {
+                botName = "Người chơi " + suffix++;
+            } while (usedNames.has(normalizeBotName(botName)));
+        }
+
+        bot.name = botName;
+        usedNames.add(normalizeBotName(botName));
         room.players.push(bot);
         added++;
     }
