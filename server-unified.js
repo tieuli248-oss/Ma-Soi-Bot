@@ -3963,11 +3963,42 @@ function testAllowedRoles(count) {
     return [...new Set(getRoleComposition(count))];
 }
 
+const TEST_BOT_NAMES = [
+    "An", "Bảo", "Bình", "Chi", "Duy", "Giang", "Hân", "Hào",
+    "Huy", "Khang", "Khánh", "Linh", "Minh", "My", "Nam", "Nhi",
+    "Phúc", "Quân", "Thảo", "Trang", "Trí", "Tú", "Vy", "Yến",
+    "Kai", "Ken", "Mia", "Miu", "Rio", "Sam", "Shin", "Su"
+];
+
+function normalizePlayerNameForCompare(name) {
+    return String(name || "")
+        .normalize("NFC")
+        .trim()
+        .toLocaleLowerCase("vi-VN");
+}
+
+function pickUniqueTestBotName() {
+    const usedNames = new Set(
+        room.players.map(p => normalizePlayerNameForCompare(p.name))
+    );
+    const available = TEST_BOT_NAMES.filter(
+        name => !usedNames.has(normalizePlayerNameForCompare(name))
+    );
+    if (available.length) {
+        return available[Math.floor(Math.random() * available.length)];
+    }
+
+    // Fallback hiếm: vẫn bảo đảm không trùng bất kỳ tên nào đang có trong phòng.
+    let n = 1;
+    while (usedNames.has(normalizePlayerNameForCompare("Người chơi " + n))) n++;
+    return "Người chơi " + n;
+}
+
 function testBotPlayer(index) {
     const stamp = Date.now() + "-" + index + "-" + Math.random().toString(36).slice(2, 8);
     return {
         id: "BOT-" + stamp,
-        name: "🤖 Bot " + String(index).padStart(2, "0"),
+        name: pickUniqueTestBotName(),
         deviceId: "test-bot-" + stamp,
         connected: true,
         leftGame: false,
