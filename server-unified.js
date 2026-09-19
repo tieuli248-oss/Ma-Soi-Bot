@@ -32,11 +32,11 @@ const ALLOWED_SIZES = Array.from(
 
 const TIME = {
     night: 60,
-    mainNightAction: 50,
+    mainNightAction: 40,
     cupidPair: 15,
-    witchPoison: 50,
+    witchPoison: 40,
     witchSave: 10,
-    hunterShoot: 15,
+    hunterShoot: 10,
     daySpeech: 180,
     dayVote: 30
 };
@@ -1679,10 +1679,15 @@ function finishAfterHunter(context) {
     if (checkWinner()) return;
 
     if (context === "night") {
-        startDaySpeech(
-            room.night?.witchSave === true,
-            !!room.night?.witchPoisonTargetId
-        );
+        const nightEndsAt = Number(room.night?.nightEndsAt || Date.now());
+        const waitMs = Math.max(0, nightEndsAt - Date.now());
+        setTimeout(() => {
+            if (room.phase !== "night" || !room.night || room.pendingHunter) return;
+            startDaySpeech(
+                room.night?.witchSave === true,
+                !!room.night?.witchPoisonTargetId
+            );
+        }, waitMs);
         return;
     }
 
@@ -1714,7 +1719,7 @@ function resolveHunterShot(target, auto = false) {
     if (context === "night") room.pendingNightDeaths.push(...deaths);
 
     const message = auto
-        ? `🏹 Hết 15 giây — hệ thống random: ${hunter.name} bắn ${target.name}.`
+        ? `🏹 Hết ${TIME.hunterShoot} giây — hệ thống random: ${hunter.name} bắn ${target.name}.`
         : `🏹 ${hunter.name} đã bắn ${target.name}.`;
 
     addAdminLog(message);
@@ -2424,6 +2429,7 @@ function startNight() {
     resetNight(previousGuardTarget);
 
     const now = Date.now();
+    room.night.nightEndsAt = now + TIME.night * 1000;
     room.night.mainActionEndsAt = now + TIME.mainNightAction * 1000;
     room.night.cupidPairEndsAt = room.nightNumber === 1
         ? now + TIME.cupidPair * 1000
@@ -2450,8 +2456,18 @@ function startNight() {
     emitRoom();
     sendAdminState();
 
-    startTimer(TIME.night, finishWitchAction);
+    // Đồng hồ đêm vẫn chạy đủ 60 giây.
+    startTimer(TIME.night, () => {});
     startWitchPoisonAction();
+
+    // Giây 50: chốt cứu/độc/Sói và xử lý người chết.
+    // 10 giây cuối dành cho Hunter nếu Hunter chết; nếu không thì vẫn chờ đủ giây 60.
+    const nightRefForResolve = room.night;
+    setTimeout(() => {
+        if (room.phase === "night" && room.night === nightRefForResolve) {
+            finishWitchAction();
+        }
+    }, (TIME.mainNightAction + TIME.witchSave) * 1000);
 
     const nightRef = room.night;
     room.nightLockTimeout = setTimeout(
@@ -2529,7 +2545,7 @@ function socketForPlayer(player) {
 
 
 /* =========================================================
-   WITCH - POISON: 60 -> 11 (FIRST 50s OF NIGHT)
+   WITCH - POISON: FIRST 40s OF NIGHT
 ========================================================= */
 
 function startWitchPoisonAction() {
@@ -2555,7 +2571,7 @@ function startWitchPoisonAction() {
             "witchActionRequired",
             {
                 mode: "poison",
-                message: "☠️ Trong 50 giây đầu của đêm, chọn người để đầu độc. Bạn có thể đổi mục tiêu cho tới khi hết 50 giây.",
+                message: "☠️ Trong 40 giây đầu của đêm, chọn người để đầu độc. Bạn có thể đổi mục tiêu cho tới khi hết 40 giây.",
                 seconds: TIME.witchPoison,
                 endsAt: room.night.witchPoisonEndsAt,
                 targetId:
@@ -2659,7 +2675,7 @@ function startWitchSaveAction() {
             mode: "save",
             message: `❤️ ${target.name} đã bị Sói cắn. Bạn có 10 giây cuối đêm để quyết định cứu.`,
             seconds: TIME.witchSave,
-            endsAt: room.timerEndsAt,
+            endsAt: Date.now() + TIME.witchSave * 1000,
             targetId: target.id,
             targetName: target.name,
             protectedByGuard: false,
@@ -2672,7 +2688,7 @@ function startWitchSaveAction() {
     io.emit("witchSaveWindow", {
         active: true,
         seconds: TIME.witchSave,
-        endsAt: room.timerEndsAt
+        endsAt: Date.now() + TIME.witchSave * 1000
     });
 
     sendAdminState();
@@ -2687,12 +2703,15 @@ function finishWitchAction() {
 
     if (
         room.phase !== "night" ||
-        !room.night
+        !room.night ||
+        room.night.nightResolved === true
     ) {
 
         return;
 
     }
+
+    room.night.nightResolved = true;
 
     room.night.witchActionOpen =
         false;
@@ -2811,7 +2830,7 @@ function finishWitchAction() {
     sendAdminState();
 
     /*
-     * Kiểm tra Hunter: bắt buộc trả thù trong 15 giây.
+     * Kiểm tra Hunter: bắt buộc trả thù trong 10 giây.
      */
 
     const hunter =
@@ -2832,10 +2851,15 @@ function finishWitchAction() {
 
     }
 
-    startDaySpeech(
-        room.night?.witchSave === true,
-        !!room.night?.witchPoisonTargetId
-    );
+    const nightEndsAt = Number(room.night?.nightEndsAt || Date.now());
+    const waitMs = Math.max(0, nightEndsAt - Date.now());
+    setTimeout(() => {
+        if (room.phase !== "night" || !room.night || room.pendingHunter) return;
+        startDaySpeech(
+            room.night?.witchSave === true,
+            !!room.night?.witchPoisonTargetId
+        );
+    }, waitMs);
 
 }
 
