@@ -4720,7 +4720,7 @@ io.on(
 
         socket.on(
             "joinRoom",
-            data => {
+            (data, ack) => {
 
                 const name =
                     String(
@@ -4734,6 +4734,8 @@ io.on(
 
                 const accountId = String(data?.accountId || '').trim();
                 const avatar = String(data?.avatar || '').trim().slice(0, 500000);
+
+                console.log("[JOIN] request", { socketId: socket.id, name, deviceId: deviceId ? deviceId.slice(0, 18) : "", accountId });
 
                 if (
                     !name
@@ -5298,6 +5300,30 @@ io.on(
 
                     }
                 );
+
+                if (typeof ack === "function") {
+                    ack({
+                        ok: true,
+                        data: {
+                            room: {
+                                id: room.id,
+                                started: false,
+                                phase: "lobby",
+                                nightNumber: 0,
+                                targetPlayerCount: room.players.length,
+                                minPlayers: MIN_PLAYERS,
+                                maxPlayers: MAX_PLAYERS,
+                                hostId: room.hostId,
+                                roleComposition: getRoleComposition(room.players.length)
+                            },
+                            yourPlayerId: player.id,
+                            yourName: player.name,
+                            isHost: player.id === room.hostId
+                        }
+                    });
+                }
+
+                console.log("[JOIN] entered", { socketId: socket.id, name: player.name, players: room.players.length });
 
                 __frontendOwnsMusic(
                     "lobby",
