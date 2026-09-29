@@ -4074,7 +4074,7 @@ function testHostPlayer(){
 }
 
 function testEmitHostEvent(text){
-    if (!text) return;
+    if (!room.testMode || !text) return;
     const host = testHostPlayer();
     if (!host) return;
     try { storeEventHistory(text, [host], "event"); } catch (_) {}
@@ -4088,7 +4088,7 @@ function chooseTestBotTarget(candidates, preferred = null, chance = 0.55) {
 }
 
 function runTestBotNight() {
-    if (!room.testMode || !room.started || room.phase !== "night" || !room.night) return;
+    if (!room.started || room.phase !== "night" || !room.night || !room.players.some(p => p.isBot && p.alive)) return;
     const host = testHostPlayer();
 
     if (!room.night.witchActionOpen) {
@@ -4182,7 +4182,7 @@ function runTestBotNight() {
 }
 
 function runTestBotDayVote() {
-    if (!room.testMode || !room.started || room.phase !== "dayVote") return;
+    if (!room.started || room.phase !== "dayVote" || !room.players.some(p => p.isBot && p.alive)) return;
     const host = testHostPlayer();
     const bots = room.players.filter(p => p.isBot && p.alive);
     for (const bot of bots) {
@@ -4213,7 +4213,7 @@ const testBotTicker = setInterval(() => {
     for (const roomId of ROOM_IDS) {
         roomContext.run({ roomId }, () => {
             try { runTestBotNight(); runTestBotDayVote(); }
-            catch (err) { console.error("[TEST BOT][" + roomId + "]", err); }
+            catch (err) { console.error("[BOT][" + roomId + "]", err); }
         });
     }
 }, 1100);
@@ -4267,161 +4267,6 @@ io.on(
             emitRoom();
             sendAdminState();
         });
-
-        socket.on("startTestGame", data => {
-            if (room.started) {
-                socket.emit("actionError", { message: "Ván đang chạy. Hãy dừng test trước." });
-                return;
-            }
-            const starter = findPlayer(socket.data.playerId);
-            if (!starter) {
-                socket.emit("actionError", { message: "Bạn chưa vào phòng test." });
-                return;
-            }
-            if (starter.id !== room.hostId) {
-                socket.emit("actionError", { message: "Chỉ Host mới được cấu hình và bắt đầu Test Mode." });
-                return;
-            }
-
-            const count = Number(data?.count || 10);
-            if (!ALLOWED_SIZES.includes(count)) {
-                socket.emit("actionError", { message: "Số người phải từ 6 đến 15." });
-                return;
-            }
-
-            const humans = room.players.filter(p => !p.isBot && p.connected !== false && p.leftGame !== true);
-            if (humans.length > count) {
-                socket.emit("actionError", { message: "Đang có " + humans.length + " máy thật, nhiều hơn bàn " + count + " người." });
-                return;
-            }
-
-            const composition = getRoleComposition(count);
-            const remainingCounts = {};
-            for (const role of composition) remainingCounts[role] = (remainingCounts[role] || 0) + 1;
-
-            const requested = data?.roleAssignments && typeof data.roleAssignments === "object" ? data.roleAssignments : {};
-            const cleanAssignments = {};
-            for (const human of humans) {
-                const role = String(requested[human.id] || "").trim();
-                if (!role || role === "Random") continue;
-                if (!testAllowedRoles(count).includes(role)) {
-                    socket.emit("actionError", { message: role + " không có trong bàn " + count + " người." });
-                    return;
-                }
-                if (!remainingCounts[role]) {
-                    socket.emit("actionError", { message: "Không đủ slot vai " + role + " cho các máy thật đã chọn." });
-                    return;
-                }
-                remainingCounts[role]--;
-                cleanAssignments[human.id] = role;
-            }
-
-            room.players = humans;
-            for (const human of humans) {
-                human.connected = true;
-                human.leftGame = false;
-                human.ready = true;
-                human.alive = true;
-                human.role = null;
-                human.loverId = null;
-                human.deathReasons = [];
-                human.used = { witchSave: false, witchPoison: false };
-                human.seerUsedNight = false;
-                human.dayVoteTargetId = null;
-                human.isBot = false;
-            }
-
-            room.hostId = starter.id;
-            room.testMode = true;
-            room.testHumanId = starter.id;
-            room.testRoleAssignments = cleanAssignments;
-            room.testConfig = {
-                count,
-                roleAssignments: { ...cleanAssignments }
-            };
-            room.testBotWolfNight = null;
-            room.testBotWolfTargetId = null;
-
-            const botsNeeded = count - humans.length;
-            for (let i = 1; i <= botsNeeded; i++) room.players.push(testBotPlayer(i));
-            room.targetPlayerCount = count;
-
-            const result = startGame();
-            if (!result?.ok) {
-                socket.emit("actionError", { message: result?.message || "Không thể bắt đầu Test Mode." });
-                return;
-            }
-
-            socket.emit("testRoleMap", {
-                count,
-                humanCount: humans.length,
-                botCount: botsNeeded,
-                showAllRoles: true,
-                players: room.players.map(p => ({
-                    id: p.id,
-                    name: p.name,
-                    role: p.role,
-                    isBot: !!p.isBot,
-                    alive: p.alive,
-                    connected: p.connected
-                }))
-            });
-            sendTestObserverState();
-            testEmitHostEvent("🧪 Host " + starter.name + " bắt đầu bàn test " + count + " người: " + humans.length + " máy thật + " + botsNeeded + " Bot.");
-            addAdminLog("TEST MODE MULTI: " + humans.length + " humans, " + botsNeeded + " bots, table " + count + ".");
-        });
-
-        socket.on("stopTestGame", () => {
-            const player = findPlayer(socket.data.playerId);
-            if (!player || player.id !== room.hostId) {
-                socket.emit("actionError", { message: "Chỉ Host mới được dừng ván Test Bot." });
-                return;
-            }
-
-            roomEmit("testStopped", {
-                message: "Host đã dừng ván test. Bot cũ đã được xóa; TEST BOT vẫn bật."
-            });
-            room.testMode = true;
-            resetRoom("HOST STOP CURRENT TEST ROUND");
-            addAdminLog("TEST ROUND stopped by host " + player.name + "; Test Bot remains enabled.");
-        });
-
-        socket.on("setTestBotEnabled", data => {
-            const player = findPlayer(socket.data.playerId);
-            if (!player || player.id !== room.hostId || room.started) {
-                socket.emit("actionError", {
-                    message: room.started
-                        ? "Chỉ có thể bật/tắt TEST BOT ở Lobby."
-                        : "Chỉ Host mới được bật/tắt TEST BOT."
-                });
-                return;
-            }
-
-            const enabled = data?.enabled === true;
-            room.testMode = enabled;
-
-            if (!enabled) {
-                room.players = room.players.filter(p => !p.isBot);
-                room.testConfig = null;
-                room.testHumanId = null;
-                room.testRoleAssignments = {};
-                room.testBotWolfNight = null;
-                room.testBotWolfTargetId = null;
-            } else {
-                room.testHumanId = room.hostId;
-            }
-
-            socket.emit("testModeState", { enabled });
-            roomEmit(enabled ? "testBotEnabled" : "testBotDisabled", {
-                enabled,
-                message: enabled
-                    ? "🧪 TEST BOT đã bật."
-                    : "TEST BOT đã tắt; Lobby trở lại chế độ người thật."
-            });
-            emitRoom();
-            sendAdminState();
-        });
-
 
         /* =====================================================
            ADMIN LOGIN
@@ -5537,6 +5382,49 @@ io.on(
                     return;
 
                 }
+
+                // Chế độ chơi thật: Host chọn tổng số người (6-15).
+                // Server tự bù Bot cho đủ bàn rồi startGame() xáo/chia role ngẫu nhiên
+                // cho TOÀN BỘ người thật + Bot.
+                const target = Number(room.targetPlayerCount || MIN_PLAYERS);
+                const humans = room.players.filter(
+                    p => !p.isBot && p.connected !== false && p.leftGame !== true
+                );
+
+                if (!ALLOWED_SIZES.includes(target)) {
+                    socket.emit("actionError", {
+                        message: `Số người phải từ ${MIN_PLAYERS} đến ${MAX_PLAYERS}.`
+                    });
+                    return;
+                }
+
+                if (humans.length > target) {
+                    socket.emit("actionError", {
+                        message: `Phòng đang có ${humans.length} người thật, nhiều hơn bàn ${target} người.`
+                    });
+                    return;
+                }
+
+                // Xóa Bot của lượt chuẩn bị cũ (nếu có) rồi tạo lại đúng số lượng.
+                room.players = humans;
+                for (const human of humans) {
+                    human.isBot = false;
+                    human.connected = true;
+                    human.leftGame = false;
+                    human.ready = true;
+                    human.role = null;
+                }
+
+                const botsNeeded = target - humans.length;
+                for (let i = 1; i <= botsNeeded; i++) {
+                    room.players.push(testBotPlayer(i));
+                }
+
+                room.testMode = false;
+                room.testConfig = null;
+                room.testHumanId = null;
+                room.testRoleAssignments = {};
+                room.targetPlayerCount = target;
 
                 const result =
                     startGame();
