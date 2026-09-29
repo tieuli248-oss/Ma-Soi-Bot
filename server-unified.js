@@ -9,6 +9,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { Server } = require("socket.io");
+const { AsyncLocalStorage } = require("async_hooks");
 
 /* =========================================================
    CONFIG
@@ -146,9 +147,12 @@ const io = new Server(
    ROOM
 ========================================================= */
 
-const room = {
+const ROOM_IDS = ["ROOM_01", "ROOM_02"];
+const roomContext = new AsyncLocalStorage();
 
-    id: "MAIN",
+function createRoom(id) { return {
+
+    id,
 
     players: [],
 
@@ -203,7 +207,47 @@ const room = {
     gameStartedAt: null,
     totalNightsPlayed: 0
 
-};
+}; }
+
+const rooms = new Map(
+    ROOM_IDS.map(id => [id, createRoom(id)])
+);
+
+function normalizeRoomId(value) {
+    return ROOM_IDS.includes(String(value || "").toUpperCase())
+        ? String(value).toUpperCase()
+        : "ROOM_01";
+}
+
+function currentRoom() {
+    const id = normalizeRoomId(roomContext.getStore()?.roomId);
+    return rooms.get(id);
+}
+
+// Giữ toàn bộ game engine cũ dùng `room.xxx`, nhưng room giờ tự trỏ
+// đúng ROOM_01 / ROOM_02 theo context của socket/timer hiện tại.
+const room = new Proxy({}, {
+    get(_target, prop) { return currentRoom()[prop]; },
+    set(_target, prop, value) { currentRoom()[prop] = value; return true; }
+});
+
+function roomEmit(...args) {
+    return io.to(currentRoom().id).emit(...args);
+}
+
+function publicRoomList() {
+    return ROOM_IDS.map(id => {
+        const r = rooms.get(id);
+        return {
+            id,
+            playerCount: r.players.filter(p => p.connected !== false && p.leftGame !== true).length,
+            maxPlayers: MAX_PLAYERS,
+            started: !!r.started,
+            phase: r.phase,
+            status: r.started ? "playing" : "lobby"
+        };
+    });
+}
 
 
 /* =========================================================
@@ -581,7 +625,7 @@ function publicAudioConfig() {
 function emitAudioConfig(target = null) {
     const payload = publicAudioConfig();
     if (target) io.to(target).emit("audioConfigChanged", payload);
-    else io.emit("audioConfigChanged", payload);
+    else roomEmit("audioConfigChanged", payload);
 }
 
 
@@ -635,7 +679,7 @@ function emitMusic(key, target = null) {
 
     } else {
 
-        io.emit(
+        roomEmit(
             "musicChange",
             payload
         );
@@ -711,7 +755,7 @@ function publicPlayers(
 
 function emitRoom() {
 
-    io.emit(
+    roomEmit(
         "roomState",
         {
 
@@ -1044,7 +1088,7 @@ function startTimer(
         Date.now() +
         seconds * 1000;
 
-    io.emit(
+    roomEmit(
         "phaseTimer",
         {
 
@@ -1088,7 +1132,7 @@ function startTimer(
                         )
                     );
 
-                io.emit(
+                roomEmit(
                     "phaseTimer",
                     {
 
@@ -1539,7 +1583,7 @@ function sendWolfTargets() {
 
 function broadcastPlayers() {
 
-    io.emit(
+    roomEmit(
         "playersUpdated",
         {
             players:
@@ -1730,7 +1774,7 @@ function resolveHunterShot(target, auto = false) {
     addAdminLog(message);
     storeEventHistory(message, room.players);
 
-    io.emit("hunterShotResolved", {
+    roomEmit("hunterShotResolved", {
         hunterId: hunter.id,
         hunterName: hunter.name,
         targetId: target.id,
@@ -1767,7 +1811,7 @@ function startHunterRevenge(hunter, context) {
 
     const publicTargets = targets.map(p => ({ id: p.id, name: p.name }));
 
-    io.emit("hunterRevengeStarted", {
+    roomEmit("hunterRevengeStarted", {
         hunterId: hunter.id,
         hunterName: hunter.name,
         seconds: TIME.hunterShoot,
@@ -1825,7 +1869,7 @@ function finalDeaths(
 
     broadcastPlayers();
 
-    io.emit(
+    roomEmit(
         eventName,
         {
 
@@ -1947,7 +1991,7 @@ function autoResetForInactivePlayers() {
             p => p.connected === true && p.leftGame !== true
         );
 
-    io.emit(
+    roomEmit(
         "gameAutoReset",
         { message }
     );
@@ -2386,7 +2430,7 @@ function startGameIntro() {
 
     __frontendOwnsMusic("night");
 
-    io.emit("phaseChanged", {
+    roomEmit("phaseChanged", {
         phase: "intro",
         nightNumber: 1,
         players: publicPlayers(false),
@@ -2446,7 +2490,7 @@ function startNight() {
 
     __frontendOwnsMusic("night");
 
-    io.emit("phaseChanged", {
+    roomEmit("phaseChanged", {
         phase: "night",
         nightNumber: room.nightNumber,
         players: publicPlayers(false),
@@ -2505,7 +2549,7 @@ function lockNightMainActions(nightRef = room.night) {
     lockWitchPoisonSelection();
     room.night.wolfTargetId = calculateWolfTarget()?.id || null;
 
-    io.emit("nightMainActionsLocked", {
+    roomEmit("nightMainActionsLocked", {
         nightNumber: room.nightNumber,
         remaining: TIME.witchSave,
         message: "🔒 Đã khóa hành động chính. Đêm vẫn chạy tiếp tới 0."
@@ -2690,7 +2734,7 @@ function startWitchSaveAction() {
         });
     }
 
-    io.emit("witchSaveWindow", {
+    roomEmit("witchSaveWindow", {
         active: true,
         seconds: TIME.witchSave,
         endsAt: Date.now() + TIME.witchSave * 1000
@@ -2727,7 +2771,7 @@ function finishWitchAction() {
     room.night.witchActionResolved =
         true;
 
-    io.emit("witchSaveWindow", { active: false });
+    roomEmit("witchSaveWindow", { active: false });
 
     const deaths = [];
 
@@ -2891,7 +2935,7 @@ function startDaySpeech(
     room.phase =
         "daySpeech";
 
-    io.emit("coupleHearts", { active: false });
+    roomEmit("coupleHearts", { active: false });
 
     addLog(
         `☀️ Ngày ${room.nightNumber} bắt đầu.`
@@ -2940,7 +2984,7 @@ function startDaySpeech(
         "daySpeech"
     );
 
-    io.emit(
+    roomEmit(
         "phaseChanged",
         {
 
@@ -3021,7 +3065,7 @@ function sendDayVoteState(targetSocketId = null) {
     if (targetSocketId) {
         io.to(targetSocketId).emit("dayVoteState", payload);
     } else {
-        io.emit("dayVoteState", payload);
+        roomEmit("dayVoteState", payload);
     }
 }
 
@@ -3070,7 +3114,7 @@ function startDayVote() {
         "dayVote"
     );
 
-    io.emit(
+    roomEmit(
         "phaseChanged",
         {
 
@@ -3204,7 +3248,7 @@ function resolveDayVote() {
         highest <= eligibleVotersForTarget / 2
     ) {
 
-        io.emit(
+        roomEmit(
             "voteResult",
             {
 
@@ -3364,7 +3408,7 @@ function endGame(
         room.players
     );
 
-    io.emit(
+    roomEmit(
         "gameEnded",
         {
 
@@ -3557,7 +3601,7 @@ function resetDailyData() {
     stopTimer();
     stopGamePlayClock();
 
-    io.emit("dailyReset", {
+    roomEmit("dailyReset", {
         message: "🌅 Sang ngày mới, phòng đã tự reset dữ liệu."
     });
 
@@ -3605,7 +3649,9 @@ const dailyResetWatcher = setInterval(() => {
     if (nowKey === activeDayKey) return;
 
     activeDayKey = nowKey;
-    resetDailyData();
+    for (const roomId of ROOM_IDS) {
+        roomContext.run({ roomId }, () => resetDailyData());
+    }
 }, 30_000);
 
 if (typeof dailyResetWatcher.unref === "function") {
@@ -4164,8 +4210,12 @@ function runTestBotDayVote() {
 }
 
 const testBotTicker = setInterval(() => {
-    try { runTestBotNight(); runTestBotDayVote(); }
-    catch (err) { console.error("[TEST BOT]", err); }
+    for (const roomId of ROOM_IDS) {
+        roomContext.run({ roomId }, () => {
+            try { runTestBotNight(); runTestBotDayVote(); }
+            catch (err) { console.error("[TEST BOT][" + roomId + "]", err); }
+        });
+    }
 }, 1100);
 if (typeof testBotTicker.unref === "function") testBotTicker.unref();
 
@@ -4179,7 +4229,33 @@ io.on(
         socket.data.playerId =
             null;
 
+        socket.data.roomId = "ROOM_01";
+
+        const originalSocketOn = socket.on.bind(socket);
+        socket.on = (eventName, handler) => {
+            return originalSocketOn(eventName, (...args) => {
+                if (eventName === "joinRoom") {
+                    const requestedRoomId = normalizeRoomId(args[0]?.roomId);
+                    const previousRoomId = normalizeRoomId(socket.data.roomId);
+                    if (previousRoomId !== requestedRoomId) socket.leave(previousRoomId);
+                    socket.data.roomId = requestedRoomId;
+                    socket.join(requestedRoomId);
+                }
+
+                const roomId = normalizeRoomId(socket.data.roomId);
+                return roomContext.run({ roomId }, () => handler(...args));
+            });
+        };
+
+        socket.join(socket.data.roomId);
+
         socket.emit("audioConfigChanged", publicAudioConfig());
+
+        socket.on("getRooms", (_data, ack) => {
+            const payload = { rooms: publicRoomList() };
+            if (typeof ack === "function") ack(payload);
+            else socket.emit("roomsState", payload);
+        });
 
         socket.on("updateAccountProfile", data => {
             const player = findPlayer(socket.data.playerId);
@@ -4302,7 +4378,7 @@ io.on(
                 return;
             }
 
-            io.emit("testStopped", {
+            roomEmit("testStopped", {
                 message: "Host đã dừng ván test. Bot cũ đã được xóa; TEST BOT vẫn bật."
             });
             room.testMode = true;
@@ -4336,7 +4412,7 @@ io.on(
             }
 
             socket.emit("testModeState", { enabled });
-            io.emit(enabled ? "testBotEnabled" : "testBotDisabled", {
+            roomEmit(enabled ? "testBotEnabled" : "testBotDisabled", {
                 enabled,
                 message: enabled
                     ? "🧪 TEST BOT đã bật."
@@ -4746,7 +4822,7 @@ io.on(
                 const accountId = String(data?.accountId || '').trim();
                 const avatar = String(data?.avatar || '').trim().slice(0, 500000);
 
-                console.log("[JOIN] request", { socketId: socket.id, name, deviceId: deviceId ? deviceId.slice(0, 18) : "", accountId });
+                console.log("[JOIN] request", { roomId: room.id, socketId: socket.id, name, deviceId: deviceId ? deviceId.slice(0, 18) : "", accountId });
 
                 if (
                     !name
@@ -6737,6 +6813,8 @@ io.on(
 
                 socket.data.playerId =
                     null;
+
+                socket.leave(normalizeRoomId(socket.data.roomId));
 
             }
         );
