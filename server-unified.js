@@ -16,8 +16,11 @@ const { Server } = require("socket.io");
 
 const PORT = process.env.PORT || 3000;
 
-const ADMIN_PASSWORD =
-    process.env.ADMIN_PASSWORD || "YeuVee";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+
+if (!ADMIN_PASSWORD) {
+    throw new Error("Thiếu ADMIN_PASSWORD");
+}
 
 const FRONTEND_URL =
     process.env.FRONTEND_URL || "*";
