@@ -4181,6 +4181,17 @@ io.on(
 
         socket.emit("audioConfigChanged", publicAudioConfig());
 
+        socket.on("updateAccountProfile", data => {
+            const player = findPlayer(socket.data.playerId);
+            if (!player) return;
+
+            const avatar = String(data?.avatar || "").trim().slice(0, 500000);
+            player.avatar = avatar || null;
+
+            emitRoom();
+            sendAdminState();
+        });
+
         socket.on("startTestGame", data => {
             if (room.started) {
                 socket.emit("actionError", { message: "Ván đang chạy. Hãy dừng test trước." });
