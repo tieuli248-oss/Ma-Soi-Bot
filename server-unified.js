@@ -688,7 +688,13 @@ function publicPlayers(
                     p.dayVoteTargetId,
 
                 isBot:
-                    !!p.isBot
+                    !!p.isBot,
+
+                accountId:
+                    p.accountId || null,
+
+                avatar:
+                    p.avatar || null
 
             };
 
@@ -4624,6 +4630,27 @@ io.on(
         );
 
 
+        socket.on("adminDeleteAccount", data => {
+            if (!socket.data.isAdmin) return;
+            const accountId = String(data?.accountId || '').trim();
+            if (!accountId) return;
+            const player = room.players.find(p => String(p.accountId || '') === accountId);
+            if (!player) return;
+            const targetSocket = io.sockets.sockets.get(player.id);
+            if (targetSocket) {
+                targetSocket.emit("leftRoom", { reason:"accountDeleted", message:"Tài khoản đã bị Admin xóa." });
+                targetSocket.data.playerId = null;
+                targetSocket.disconnect(true);
+            }
+            room.players = room.players.filter(p => p !== player);
+            if (room.hostId === player.id) chooseHost();
+            if (!room.started) room.targetPlayerCount = room.players.length;
+            addAdminLog(`Admin xóa tài khoản của ${player.name} khỏi game.`);
+            emitRoom();
+            sendAdminState();
+        });
+
+
         /* =====================================================
            ADMIN KICK ALL
         ===================================================== */
@@ -4704,6 +4731,9 @@ io.on(
                     String(
                         data?.deviceId || ""
                     ).trim();
+
+                const accountId = String(data?.accountId || '').trim();
+                const avatar = String(data?.avatar || '').trim().slice(0, 500000);
 
                 if (
                     !name
@@ -5156,6 +5186,10 @@ io.on(
                         socket.id,
 
                     name,
+
+                    accountId: accountId || null,
+
+                    avatar: avatar || null,
 
                     deviceId,
 
