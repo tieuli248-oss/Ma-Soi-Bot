@@ -3640,9 +3640,13 @@ function resetRoom(adminLogMessage = "Admin reset phòng.") {
         }
         : null;
 
-    if (keepTestMode) {
-        room.players = room.players.filter(p => !p.isBot);
-    }
+    /*
+     * Bot chỉ là filler của MỘT ván.
+     * Mọi reset về lobby đều phải xoá Bot, kể cả ván thường.
+     * Trước đây chỉ testMode mới xoá Bot nên sau khi ván kết thúc/out hết,
+     * Bot có thể bị giữ lại trong lobby.
+     */
+    room.players = room.players.filter(p => !p.isBot);
 
     room.started =
         false;
