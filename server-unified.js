@@ -1512,6 +1512,19 @@ function sendWolfVoteState() {
             continue;
         }
 
+        const voters = [];
+
+        for (const [wolfId, votedTargetId] of room.night.wolfVotes) {
+            if (votedTargetId !== targetId) continue;
+            const wolf = findPlayer(wolfId);
+            if (!wolf || !wolf.alive || wolf.role !== "Sói") continue;
+            voters.push({
+                id: wolf.id,
+                name: wolf.name,
+                avatar: wolf.avatar || null
+            });
+        }
+
         votes.push({
 
             targetId,
@@ -1520,6 +1533,8 @@ function sendWolfVoteState() {
                 target.name,
 
             count,
+
+            voters,
 
             icon:
                 "🎯"
@@ -1534,6 +1549,9 @@ function sendWolfVoteState() {
     const payload = {
 
         votes,
+
+        aliveWolfCount:
+            aliveWolves().length,
 
         currentTargetId:
             currentTarget?.id ||
@@ -3140,7 +3158,8 @@ function sendDayVoteState(targetSocketId = null) {
 
         grouped.get(target.id).voters.push({
             id: voter.id,
-            name: voter.name
+            name: voter.name,
+            avatar: voter.avatar || null
         });
     }
 
