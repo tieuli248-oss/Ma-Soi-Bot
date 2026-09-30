@@ -1966,6 +1966,48 @@ function shouldAutoResetForInactivePlayers() {
 
 function autoResetForInactivePlayers() {
 
+    if (!room.started) return false;
+
+    /*
+     * Bot chỉ tồn tại để bù chỗ cho người thật.
+     * Nếu trong ván không còn BẤT KỲ người thật nào đang ở phòng,
+     * đóng ván ngay và xoá toàn bộ Bot. Không để Bot tự chơi một phòng rỗng.
+     */
+    const activeHumans =
+        room.players.filter(
+            p =>
+                !p.isBot &&
+                p.connected === true &&
+                p.leftGame !== true
+        );
+
+    if (activeHumans.length === 0) {
+
+        const message =
+            "♻️ Ván đã tự đóng vì không còn người thật trong phòng.";
+
+        addLog(message);
+        addAdminLog("AUTO CLOSE: no real players remain in the room.");
+
+        roomEmit(
+            "gameAutoReset",
+            { message }
+        );
+
+        room.players = [];
+        room.hostId = null;
+        room.testMode = false;
+        room.testConfig = null;
+        room.testHumanId = null;
+        room.testRoleAssignments = {};
+
+        resetRoom(
+            "AUTO CLOSE TO EMPTY LOBBY: no real players remain."
+        );
+
+        return true;
+    }
+
     if (!shouldAutoResetForInactivePlayers()) return false;
 
     const total =
@@ -1983,12 +2025,15 @@ function autoResetForInactivePlayers() {
     addAdminLog(`AUTO RESET: ${inactive}/${total} inactive (>= 50%).`);
 
     /*
-     * Chỉ giữ người vẫn đang kết nối.
-     * Người mất mạng / đã out sẽ không bị kéo trở lại lobby.
+     * Chỉ giữ người thật vẫn đang kết nối.
+     * Bot của ván cũ phải bị xoá; ván sau Host bấm PLAY thì server bù Bot mới.
      */
     room.players =
         room.players.filter(
-            p => p.connected === true && p.leftGame !== true
+            p =>
+                !p.isBot &&
+                p.connected === true &&
+                p.leftGame !== true
         );
 
     roomEmit(
@@ -6874,6 +6919,14 @@ function handleDisconnect(
             room.exitedDeviceIds.add(
                 player.deviceId || `id:${player.id}`
             );
+        }
+
+        /*
+         * Nếu người vừa rời là người thật cuối cùng,
+         * đóng ván ngay thay vì để Bot tiếp tục chơi một mình.
+         */
+        if (autoResetForInactivePlayers()) {
+            return;
         }
 
         if (
