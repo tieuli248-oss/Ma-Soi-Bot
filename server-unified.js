@@ -399,6 +399,27 @@ function findPlayerByDeviceId(deviceId) {
 }
 
 
+function findPlayerByAccountIdAcrossRooms(accountId) {
+    const id = String(accountId || "").trim();
+    if (!id) return null;
+
+    for (const roomId of ROOM_IDS) {
+        const targetRoom = rooms.get(roomId);
+        const player = targetRoom?.players?.find(
+            p =>
+                String(p.accountId || "").trim() === id &&
+                p.leftGame !== true
+        );
+
+        if (player) {
+            return { roomId, room: targetRoom, player };
+        }
+    }
+
+    return null;
+}
+
+
 function alivePlayers() {
 
     return room.players.filter(
@@ -4813,6 +4834,65 @@ io.on(
                 }
 
 
+                /*
+                 * Một account chỉ được giữ 1 ghế trên toàn server.
+                 * - Nếu account đang ONLINE ở ROOM 01/02: chặn cửa sổ/tab thứ hai.
+                 * - Nếu account đang OFFLINE và còn ghế giữ chỗ: chỉ cho reconnect đúng room đó.
+                 */
+                const accountSeat =
+                    findPlayerByAccountIdAcrossRooms(
+                        accountId
+                    );
+
+                if (
+                    accountSeat &&
+                    accountSeat.player.connected &&
+                    accountSeat.player.id !== socket.id
+                ) {
+                    const message =
+                        `Tài khoản này đang ở ${accountSeat.roomId === "ROOM_01" ? "ROOM 01" : "ROOM 02"}. Một tài khoản chỉ được vào game trên 1 thiết bị cùng lúc.`;
+
+                    socket.emit(
+                        "enterError",
+                        { message, code: "ACCOUNT_ALREADY_ONLINE" }
+                    );
+
+                    if (typeof ack === "function") {
+                        ack({
+                            ok: false,
+                            error: message,
+                            code: "ACCOUNT_ALREADY_ONLINE"
+                        });
+                    }
+
+                    return;
+                }
+
+                if (
+                    accountSeat &&
+                    !accountSeat.player.connected &&
+                    accountSeat.roomId !== room.id
+                ) {
+                    const message =
+                        `Tài khoản này đang được giữ chỗ tại ${accountSeat.roomId === "ROOM_01" ? "ROOM 01" : "ROOM 02"}. Hãy vào lại phòng đó hoặc chờ hết thời gian giữ chỗ.`;
+
+                    socket.emit(
+                        "enterError",
+                        { message, code: "ACCOUNT_RESERVED_OTHER_ROOM" }
+                    );
+
+                    if (typeof ack === "function") {
+                        ack({
+                            ok: false,
+                            error: message,
+                            code: "ACCOUNT_RESERVED_OTHER_ROOM"
+                        });
+                    }
+
+                    return;
+                }
+
+
                 /* =================================================
                    RECONNECT GAME
                 ================================================= */
@@ -4822,9 +4902,15 @@ io.on(
                 ) {
 
                     const reconnectPlayer =
-                        findPlayerByDeviceId(
-                            deviceId
-                        );
+                        (
+                            accountSeat &&
+                            accountSeat.roomId === room.id &&
+                            !accountSeat.player.connected
+                        )
+                            ? accountSeat.player
+                            : findPlayerByDeviceId(
+                                deviceId
+                            );
 
                     if (
                         reconnectPlayer &&
@@ -5152,7 +5238,13 @@ io.on(
                 // Nếu chỉ rớt mạng / đóng tab đột ngột ở phòng chờ,
                 // giữ ghế 60 giây. Vào lại cùng deviceId sẽ nhận lại đúng ghế.
                 const lobbyReconnectPlayer =
-                    findPlayerByDeviceId(deviceId);
+                    (
+                        accountSeat &&
+                        accountSeat.roomId === room.id &&
+                        !accountSeat.player.connected
+                    )
+                        ? accountSeat.player
+                        : findPlayerByDeviceId(deviceId);
 
                 if (
                     lobbyReconnectPlayer &&
