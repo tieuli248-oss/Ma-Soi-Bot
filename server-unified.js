@@ -4794,7 +4794,7 @@ io.on(
                 }
 
                 if (
-                    name.length > 20
+                    name.length > 16
                 ) {
 
                     socket.emit(
@@ -4802,7 +4802,7 @@ io.on(
                         {
 
                             message:
-                                "Tên tối đa 20 ký tự."
+                                "Tên tối đa 16 ký tự."
 
                         }
                     );
