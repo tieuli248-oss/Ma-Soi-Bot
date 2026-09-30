@@ -4372,6 +4372,99 @@ const testBotTicker = setInterval(() => {
 }, 1100);
 if (typeof testBotTicker.unref === "function") testBotTicker.unref();
 
+/*
+ * Đồng bộ trạng thái auth session với Account API.
+ * Nếu người dùng đổi mật khẩu / đăng xuất tất cả thiết bị khác / OTP takeover,
+ * socket game dùng session đã bị thu hồi sẽ bị đẩy ra trong tối đa ~15 giây.
+ */
+const accountSessionGuardTicker = setInterval(async () => {
+    if (!ADMIN_PASSWORD) return;
+
+    const sessionToPlayer = new Map();
+
+    for (const roomId of ROOM_IDS) {
+        const targetRoom = rooms.get(roomId);
+        for (const player of targetRoom.players) {
+            if (
+                player.isBot ||
+                !player.connected ||
+                !player.accountSessionId
+            ) continue;
+
+            sessionToPlayer.set(
+                String(player.accountSessionId),
+                { roomId, player }
+            );
+        }
+    }
+
+    const sessionIds = [...sessionToPlayer.keys()];
+    if (!sessionIds.length) return;
+
+    try {
+        const response = await fetch(
+            ACCOUNT_API_URL + "/api/admin/sessions/active",
+            {
+                method: "POST",
+                headers: {
+                    "content-type": "application/json",
+                    "x-admin-key": ADMIN_PASSWORD
+                },
+                body: JSON.stringify({ sessionIds })
+            }
+        );
+
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.success === false) return;
+
+        const active = new Set(
+            (data.activeSessionIds || []).map(String)
+        );
+
+        for (const [sessionId, info] of sessionToPlayer) {
+            if (active.has(sessionId)) continue;
+
+            roomContext.run(
+                { roomId: info.roomId },
+                () => {
+                    const current =
+                        room.players.find(
+                            p =>
+                                p === info.player &&
+                                p.connected === true &&
+                                String(p.accountSessionId || "") === sessionId
+                        );
+
+                    if (!current) return;
+
+                    const targetSocket =
+                        io.sockets.sockets.get(current.id);
+
+                    if (targetSocket) {
+                        targetSocket.emit("sessionRevoked", {
+                            message: "Phiên đăng nhập trên thiết bị này đã bị thu hồi."
+                        });
+
+                        // Thu hồi bảo mật là rời thật, không giữ ghế reconnect.
+                        handleDisconnect(targetSocket, true);
+                        targetSocket.data.playerId = null;
+                        targetSocket.disconnect(true);
+                    }
+                }
+            );
+        }
+    } catch (err) {
+        console.error(
+            "[SESSION GUARD]",
+            err?.message || err
+        );
+    }
+}, 15_000);
+
+if (typeof accountSessionGuardTicker.unref === "function") {
+    accountSessionGuardTicker.unref();
+}
+
 io.on(
     "connection",
     socket => {
