@@ -152,6 +152,7 @@ const io = new Server(
 ========================================================= */
 
 const ROOM_IDS = ["ROOM_01", "ROOM_02"];
+const LOBBY_OFFLINE_GRACE_MS = 60_000; // giữ ghế 60 giây khi rớt mạng ở phòng chờ
 const roomContext = new AsyncLocalStorage();
 
 function createRoom(id) { return {
@@ -244,7 +245,7 @@ function publicRoomList() {
         const r = rooms.get(id);
         return {
             id,
-            playerCount: r.players.filter(p => p.connected !== false && p.leftGame !== true).length,
+            playerCount: r.players.filter(p => p.leftGame !== true).length,
             maxPlayers: MAX_PLAYERS,
             started: !!r.started,
             phase: r.phase,
@@ -5145,8 +5146,71 @@ io.on(
 
 
                 /* =================================================
-                   LOBBY JOIN
+                   LOBBY JOIN / RECONNECT
                 ================================================= */
+
+                // Nếu chỉ rớt mạng / đóng tab đột ngột ở phòng chờ,
+                // giữ ghế 60 giây. Vào lại cùng deviceId sẽ nhận lại đúng ghế.
+                const lobbyReconnectPlayer =
+                    findPlayerByDeviceId(deviceId);
+
+                if (
+                    lobbyReconnectPlayer &&
+                    !lobbyReconnectPlayer.connected &&
+                    lobbyReconnectPlayer.leftGame !== true
+                ) {
+                    const oldId = lobbyReconnectPlayer.id;
+                    const newId = socket.id;
+
+                    if (lobbyReconnectPlayer.lobbyOfflineTimer) {
+                        clearTimeout(lobbyReconnectPlayer.lobbyOfflineTimer);
+                        lobbyReconnectPlayer.lobbyOfflineTimer = null;
+                    }
+
+                    lobbyReconnectPlayer.id = newId;
+                    lobbyReconnectPlayer.connected = true;
+                    lobbyReconnectPlayer.ready = false;
+                    lobbyReconnectPlayer.name = name || lobbyReconnectPlayer.name;
+                    lobbyReconnectPlayer.accountId = accountId || lobbyReconnectPlayer.accountId || null;
+                    lobbyReconnectPlayer.avatar = avatar || lobbyReconnectPlayer.avatar || null;
+
+                    if (room.hostId === oldId) {
+                        room.hostId = newId;
+                    }
+
+                    socket.data.playerId = newId;
+
+                    const enteredPayload = {
+                        room: {
+                            id: room.id,
+                            started: false,
+                            phase: "lobby",
+                            nightNumber: 0,
+                            targetPlayerCount: room.targetPlayerCount,
+                            minPlayers: MIN_PLAYERS,
+                            maxPlayers: MAX_PLAYERS,
+                            hostId: room.hostId,
+                            roleComposition: getRoleComposition(room.players.length)
+                        },
+                        yourPlayerId: newId,
+                        yourName: lobbyReconnectPlayer.name,
+                        isHost: newId === room.hostId,
+                        reconnect: true
+                    };
+
+                    socket.emit("enteredGame", enteredPayload);
+                    if (typeof ack === "function") {
+                        ack({ ok: true, data: enteredPayload });
+                    }
+
+                    __frontendOwnsMusic("lobby", socket.id);
+                    addLog(`${lobbyReconnectPlayer.name} đã kết nối lại phòng chờ.`);
+                    addAdminLog(`${lobbyReconnectPlayer.name} đã online lại trong phòng chờ.`);
+
+                    emitRoom();
+                    sendAdminState();
+                    return;
+                }
 
                 if (
                     room.players.length >=
@@ -6909,54 +6973,103 @@ function handleDisconnect(
         !room.started
     ) {
 
-        player.connected =
-            false;
+        // Bấm "Thoát phòng" = rời thật, xóa khỏi lobby ngay.
+        if (voluntary) {
+            if (player.lobbyOfflineTimer) {
+                clearTimeout(player.lobbyOfflineTimer);
+                player.lobbyOfflineTimer = null;
+            }
 
-        const wasHost =
-            room.hostId ===
-            player.id;
+            const wasHost =
+                room.hostId ===
+                player.id;
 
-        room.players =
-            room.players.filter(
-                p =>
-                    p.id !==
-                    player.id
-            );
+            room.players =
+                room.players.filter(
+                    p =>
+                        p.id !==
+                        player.id
+                );
 
-        if (
-            wasHost
-        ) {
+            if (wasHost) {
+                chooseHost();
+            }
 
-            chooseHost();
+            room.targetPlayerCount =
+                room.players.length;
 
+            addLog(`${player.name} rời phòng.`);
+            addAdminLog(`${player.name} rời phòng.`);
+
+            socket.data.playerId =
+                null;
+
+            emitRoom();
+            sendAdminState();
+            return;
         }
 
-        room.targetPlayerCount =
-            room.players.length;
+        // Rớt mạng / đóng tab đột ngột = OFFLINE nhưng vẫn giữ ghế 60 giây.
+        player.connected = false;
+        player.ready = false;
 
-        addLog(
-            `${player.name} ${
-                voluntary
-                    ? "rời phòng"
-                    : "mất kết nối"
-            }.`
-        );
+        if (player.lobbyOfflineTimer) {
+            clearTimeout(player.lobbyOfflineTimer);
+        }
 
-        addAdminLog(
-            `${player.name} ${
-                voluntary
-                    ? "rời phòng"
-                    : "mất kết nối"
-            }.`
-        );
+        const roomIdForGrace = room.id;
+        const playerDeviceIdForGrace = player.deviceId;
+        const playerIdForGrace = player.id;
 
-        socket.data.playerId =
-            null;
+        player.lobbyOfflineTimer =
+            setTimeout(
+                () => {
+                    roomContext.run(
+                        { roomId: roomIdForGrace },
+                        () => {
+                            if (room.started) return;
+
+                            const stalePlayer =
+                                room.players.find(
+                                    p =>
+                                        p.deviceId === playerDeviceIdForGrace &&
+                                        p.id === playerIdForGrace &&
+                                        p.connected === false
+                                );
+
+                            if (!stalePlayer) return;
+
+                            const wasHost =
+                                room.hostId === stalePlayer.id;
+
+                            room.players =
+                                room.players.filter(
+                                    p => p !== stalePlayer
+                                );
+
+                            if (wasHost) {
+                                chooseHost();
+                            }
+
+                            room.targetPlayerCount =
+                                room.players.length;
+
+                            addLog(`${stalePlayer.name} offline quá 60 giây nên rời phòng.`);
+                            addAdminLog(`${stalePlayer.name} hết thời gian chờ reconnect ở lobby.`);
+
+                            emitRoom();
+                            sendAdminState();
+                        }
+                    );
+                },
+                LOBBY_OFFLINE_GRACE_MS
+            );
+
+        addLog(`${player.name} mất kết nối. Giữ chỗ 60 giây để vào lại.`);
+        addAdminLog(`${player.name} offline ở lobby; chờ reconnect 60 giây.`);
 
         emitRoom();
-
         sendAdminState();
-
         return;
 
     }
