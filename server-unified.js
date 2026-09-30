@@ -19,6 +19,10 @@ const PORT = process.env.PORT || 3000;
 
 const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || "");
 
+const ACCOUNT_API_URL =
+    String(process.env.ACCOUNT_API_URL || "https://masoi-account-api.onrender.com")
+        .replace(/\/$/, "");
+
 const FRONTEND_URL =
     process.env.FRONTEND_URL || "*";
 
@@ -3409,6 +3413,60 @@ function resolveDayVote() {
 }
 
 
+function playerWonMatch(player, winner) {
+    if (winner === "Sói") return player.role === "Sói";
+    if (winner === "Dân") return player.role !== "Sói";
+    if (winner === "Couple") {
+        if (!player.alive || !player.loverId) return false;
+        const lover = room.players.find(p => p.id === player.loverId);
+        return !!lover && lover.alive === true && lover.loverId === player.id;
+    }
+    return null;
+}
+
+async function recordMatchAnalytics(winner, message) {
+    if (!ADMIN_PASSWORD || !room.gameStartedAt) return;
+
+    const endedAt = Date.now();
+    const realPlayers = room.players.filter(p => !p.isBot);
+    const payload = {
+        externalMatchId: `${room.id}:${room.gameStartedAt}`,
+        roomId: room.id,
+        startedAt: new Date(room.gameStartedAt).toISOString(),
+        endedAt: new Date(endedAt).toISOString(),
+        winner: String(winner || "Hòa"),
+        message: String(message || ""),
+        totalPlayers: room.players.length,
+        botCount: room.players.filter(p => p.isBot).length,
+        players: realPlayers.map(p => ({
+            accountId: p.accountId || null,
+            name: p.name,
+            role: p.role || null,
+            won: playerWonMatch(p, winner),
+            leftGame: p.leftGame === true,
+            alive: p.alive === true
+        }))
+    };
+
+    try {
+        const response = await fetch(ACCOUNT_API_URL + "/api/admin/matches", {
+            method: "POST",
+            headers: {
+                "content-type": "application/json",
+                "x-admin-key": ADMIN_PASSWORD
+            },
+            body: JSON.stringify(payload)
+        });
+        if (!response.ok) {
+            const text = await response.text().catch(() => "");
+            console.error("Analytics API rejected match:", response.status, text.slice(0, 300));
+        }
+    } catch (err) {
+        console.error("Không thể lưu analytics trận:", err?.message || err);
+    }
+}
+
+
 /* =========================================================
    END GAME
 ========================================================= */
@@ -3478,6 +3536,10 @@ function endGame(
     );
 
     sendAdminState();
+
+    // Lưu lịch sử trận vào PostgreSQL của Account API để Admin thống kê theo tháng.
+    // Không await để việc ghi thống kê không làm chậm kết thúc ván.
+    recordMatchAnalytics(winner, message);
 
     /*
      * Reset lobby sau một khoảng ngắn
@@ -4392,6 +4454,32 @@ io.on(
                 }
 
                 sendAdminState();
+
+            }
+        );
+
+        socket.on(
+            "adminSelectRoom",
+            data => {
+
+                if (!socket.data.isAdmin) return;
+
+                const nextRoomId =
+                    normalizeRoomId(data?.roomId);
+
+                const previousRoomId =
+                    normalizeRoomId(socket.data.roomId);
+
+                if (previousRoomId !== nextRoomId) {
+                    socket.leave(previousRoomId);
+                    socket.data.roomId = nextRoomId;
+                    socket.join(nextRoomId);
+                }
+
+                roomContext.run(
+                    { roomId: nextRoomId },
+                    () => sendAdminState()
+                );
 
             }
         );
