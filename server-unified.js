@@ -5279,6 +5279,32 @@ io.on(
 
 
         /* =====================================================
+           TARGET PLAYER COUNT
+        ===================================================== */
+
+        socket.on("setTargetPlayerCount", data => {
+            if (room.started) return;
+            const player = findPlayer(socket.data.playerId);
+            if (!player || player.id !== room.hostId) {
+                socket.emit("actionError", { message: "Chỉ Host mới được chọn số người." });
+                return;
+            }
+            const count = Number(data?.count);
+            if (!ALLOWED_SIZES.includes(count)) {
+                socket.emit("actionError", { message: `Số người phải từ ${MIN_PLAYERS} đến ${MAX_PLAYERS}.` });
+                return;
+            }
+            const humans = room.players.filter(p => !p.isBot && p.connected !== false && p.leftGame !== true);
+            if (humans.length > count) {
+                socket.emit("actionError", { message: `Đang có ${humans.length} người thật, không thể chọn bàn ${count} người.` });
+                return;
+            }
+            room.targetPlayerCount = count;
+            emitRoom();
+            sendAdminState();
+        });
+
+        /* =====================================================
            READY
         ===================================================== */
 
@@ -5390,6 +5416,16 @@ io.on(
                 const humans = room.players.filter(
                     p => !p.isBot && p.connected !== false && p.leftGame !== true
                 );
+
+                const notReady = humans.filter(
+                    p => p.id !== room.hostId && p.ready !== true
+                );
+                if (notReady.length) {
+                    socket.emit("actionError", {
+                        message: "Chưa sẵn sàng: " + notReady.map(p => p.name).join(", ")
+                    });
+                    return;
+                }
 
                 if (!ALLOWED_SIZES.includes(target)) {
                     socket.emit("actionError", {
