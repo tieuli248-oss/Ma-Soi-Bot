@@ -420,6 +420,57 @@ function findPlayerByAccountIdAcrossRooms(accountId) {
 }
 
 
+async function verifyGameAccountToken(accessToken, takeoverToken = "") {
+    const token = String(accessToken || "").trim();
+    if (!token) {
+        return { ok:false, status:401, message:"Phiên tài khoản không hợp lệ. Vui lòng đăng nhập lại." };
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 7000);
+
+    try {
+        const response = await fetch(ACCOUNT_API_URL + "/api/auth/game/verify", {
+            method: "POST",
+            headers: {
+                "content-type": "application/json",
+                "authorization": "Bearer " + token
+            },
+            body: JSON.stringify({ takeoverToken: String(takeoverToken || "") }),
+            signal: controller.signal
+        });
+
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.success === false || !data.user?.id) {
+            return {
+                ok:false,
+                status:response.status,
+                code:data.code || "ACCOUNT_SESSION_INVALID",
+                message:data.message || "Phiên tài khoản không hợp lệ."
+            };
+        }
+
+        return {
+            ok:true,
+            user:data.user,
+            sessionId:String(data.sessionId || ""),
+            takeoverAuthorized:data.takeoverAuthorized === true
+        };
+    } catch (err) {
+        return {
+            ok:false,
+            status:503,
+            code:"ACCOUNT_API_UNAVAILABLE",
+            message:err?.name === "AbortError"
+                ? "Máy chủ tài khoản phản hồi quá chậm. Hãy thử lại."
+                : "Không xác minh được phiên tài khoản. Hãy thử lại."
+        };
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+
 function alivePlayers() {
 
     return room.players.filter(
@@ -4780,9 +4831,9 @@ io.on(
 
         socket.on(
             "joinRoom",
-            (data, ack) => {
+            async (data, ack) => {
 
-                const name =
+                let name =
                     String(
                         data?.name || ""
                     ).trim();
@@ -4792,8 +4843,10 @@ io.on(
                         data?.deviceId || ""
                     ).trim();
 
-                const accountId = String(data?.accountId || '').trim();
-                const avatar = String(data?.avatar || '').trim().slice(0, 500000);
+                let accountId = String(data?.accountId || '').trim();
+                let avatar = String(data?.avatar || '').trim().slice(0, 500000);
+                const accessToken = String(data?.accountToken || '').trim();
+                const takeoverToken = String(data?.takeoverToken || '').trim();
 
                 console.log("[JOIN] request", { roomId: room.id, socketId: socket.id, name, deviceId: deviceId ? deviceId.slice(0, 18) : "", accountId });
 
@@ -4834,10 +4887,35 @@ io.on(
                 }
 
 
+                // Không tin accountId / nickname / avatar do browser tự khai.
+                // Account API xác minh access token trước khi cho join/reconnect.
+                const verifiedAccount =
+                    await verifyGameAccountToken(
+                        accessToken,
+                        takeoverToken
+                    );
+
+                if (!verifiedAccount.ok) {
+                    const payload = {
+                        message: verifiedAccount.message,
+                        code: verifiedAccount.code || "ACCOUNT_SESSION_INVALID"
+                    };
+                    socket.emit("enterError", payload);
+                    if (typeof ack === "function") ack({ ok:false, ...payload });
+                    return;
+                }
+
+                accountId = String(verifiedAccount.user.id);
+                name = String(
+                    verifiedAccount.user.displayName ||
+                    verifiedAccount.user.username ||
+                    name
+                ).trim().slice(0, 16);
+                avatar = String(verifiedAccount.user.avatar || avatar || "").trim().slice(0, 500000);
+
                 /*
                  * Một account chỉ được giữ 1 ghế trên toàn server.
-                 * - Nếu account đang ONLINE ở ROOM 01/02: chặn cửa sổ/tab thứ hai.
-                 * - Nếu account đang OFFLINE và còn ghế giữ chỗ: chỉ cho reconnect đúng room đó.
+                 * Nếu đang online, chỉ OTP takeover mới được quyền thay thế socket cũ.
                  */
                 const accountSeat =
                     findPlayerByAccountIdAcrossRooms(
@@ -4847,22 +4925,52 @@ io.on(
                 if (
                     accountSeat &&
                     accountSeat.player.connected &&
+                    accountSeat.player.id !== socket.id &&
+                    verifiedAccount.takeoverAuthorized
+                ) {
+                    // Nếu người chơi đang ở room khác, client chuyển về đúng room rồi gửi lại join.
+                    if (accountSeat.roomId !== room.id) {
+                        const payload = {
+                            message: `Tài khoản đang ở ${accountSeat.roomId === "ROOM_01" ? "ROOM 01" : "ROOM 02"}. Đang chuyển về đúng phòng để tiếp quản phiên.`,
+                            code: "ACCOUNT_TAKEOVER_SWITCH_ROOM",
+                            roomId: accountSeat.roomId
+                        };
+                        socket.emit("enterError", payload);
+                        if (typeof ack === "function") ack({ ok:false, ...payload });
+                        return;
+                    }
+
+                    // Thu hồi socket game cũ nhưng giữ nguyên ghế/role/vote để socket mới reconnect.
+                    const oldSocket = io.sockets.sockets.get(accountSeat.player.id);
+                    accountSeat.player.connected = false;
+                    if (oldSocket) {
+                        oldSocket.data.playerId = null;
+                        oldSocket.emit("sessionReplaced", {
+                            message: "Phiên game đã được chuyển sang thiết bị khác sau khi xác minh OTP."
+                        });
+                        oldSocket.disconnect(true);
+                    }
+                }
+
+                if (
+                    accountSeat &&
+                    accountSeat.player.connected &&
                     accountSeat.player.id !== socket.id
                 ) {
                     const message =
-                        `Tài khoản này đang ở ${accountSeat.roomId === "ROOM_01" ? "ROOM 01" : "ROOM 02"}. Một tài khoản chỉ được vào game trên 1 thiết bị cùng lúc.`;
+                        `Tài khoản này đang ở ${accountSeat.roomId === "ROOM_01" ? "ROOM 01" : "ROOM 02"} trên thiết bị khác.`;
 
-                    socket.emit(
-                        "enterError",
-                        { message, code: "ACCOUNT_ALREADY_ONLINE" }
-                    );
+                    const payload = {
+                        message,
+                        code: "ACCOUNT_ALREADY_ONLINE",
+                        roomId: accountSeat.roomId,
+                        canTakeover: verifiedAccount.user.emailVerified === true
+                    };
+
+                    socket.emit("enterError", payload);
 
                     if (typeof ack === "function") {
-                        ack({
-                            ok: false,
-                            error: message,
-                            code: "ACCOUNT_ALREADY_ONLINE"
-                        });
+                        ack({ ok:false, ...payload });
                     }
 
                     return;
@@ -4876,17 +4984,15 @@ io.on(
                     const message =
                         `Tài khoản này đang được giữ chỗ tại ${accountSeat.roomId === "ROOM_01" ? "ROOM 01" : "ROOM 02"}. Hãy vào lại phòng đó hoặc chờ hết thời gian giữ chỗ.`;
 
-                    socket.emit(
-                        "enterError",
-                        { message, code: "ACCOUNT_RESERVED_OTHER_ROOM" }
-                    );
+                    const payload = {
+                        message,
+                        code: "ACCOUNT_RESERVED_OTHER_ROOM",
+                        roomId: accountSeat.roomId
+                    };
+                    socket.emit("enterError", payload);
 
                     if (typeof ack === "function") {
-                        ack({
-                            ok: false,
-                            error: message,
-                            code: "ACCOUNT_RESERVED_OTHER_ROOM"
-                        });
+                        ack({ ok:false, ...payload });
                     }
 
                     return;
@@ -4929,6 +5035,9 @@ io.on(
 
                         reconnectPlayer.connected =
                             true;
+
+                        reconnectPlayer.accountSessionId =
+                            verifiedAccount.sessionId || reconnectPlayer.accountSessionId || null;
 
                         /*
                          * Host.
@@ -5264,6 +5373,7 @@ io.on(
                     lobbyReconnectPlayer.ready = false;
                     lobbyReconnectPlayer.name = name || lobbyReconnectPlayer.name;
                     lobbyReconnectPlayer.accountId = accountId || lobbyReconnectPlayer.accountId || null;
+                    lobbyReconnectPlayer.accountSessionId = verifiedAccount.sessionId || null;
                     lobbyReconnectPlayer.avatar = avatar || lobbyReconnectPlayer.avatar || null;
 
                     if (room.hostId === oldId) {
@@ -5384,6 +5494,8 @@ io.on(
                     name,
 
                     accountId: accountId || null,
+
+                    accountSessionId: verifiedAccount.sessionId || null,
 
                     avatar: avatar || null,
 
