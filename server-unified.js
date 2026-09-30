@@ -4967,6 +4967,13 @@ io.on(
                         canTakeover: verifiedAccount.user.emailVerified === true
                     };
 
+                    const activeSocket = io.sockets.sockets.get(accountSeat.player.id);
+                    if (activeSocket) {
+                        activeSocket.emit("accountLoginWarning", {
+                            message: "Có thiết bị khác vừa đăng nhập tài khoản của bạn và thử vào game. Phiên hiện tại vẫn được giữ nguyên."
+                        });
+                    }
+
                     socket.emit("enterError", payload);
 
                     if (typeof ack === "function") {
