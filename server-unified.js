@@ -941,95 +941,61 @@ function getWolfVoteStateForAdmin() {
 
 function sendAdminState() {
 
-    for (
-        const [
-            socketId,
-            socket
-        ]
-        of io.sockets.sockets
-    ) {
+    for (const [, adminSocket] of io.sockets.sockets) {
 
-        if (
-            !socket.data.isAdmin
-        ) {
+        if (!adminSocket.data.isAdmin) {
             continue;
         }
 
-        socket.emit(
-            "adminState",
-            {
+        const adminRoomId =
+            normalizeRoomId(adminSocket.data.roomId);
 
-                room: {
+        roomContext.run(
+            { roomId: adminRoomId },
+            () => {
 
-                    id:
-                        room.id,
+                adminSocket.emit(
+                    "adminState",
+                    {
 
-                    started:
-                        room.started,
+                        room: {
+                            id: room.id,
+                            started: room.started,
+                            phase: room.phase,
+                            nightNumber: room.nightNumber,
+                            targetPlayerCount: room.targetPlayerCount,
+                            hostId: room.hostId,
+                            timerEndsAt: room.timerEndsAt
+                        },
 
-                    phase:
-                        room.phase,
+                        stats: {
+                            totalPlayedMs: getTotalPlayedMs(),
+                            totalNightsPlayed: room.totalNightsPlayed,
+                            playerCount: room.players.length
+                        },
 
-                    nightNumber:
-                        room.nightNumber,
+                        players: publicPlayers(true),
 
-                    targetPlayerCount:
-                        room.targetPlayerCount,
+                        wolfVotes: getWolfVoteStateForAdmin(),
 
-                    hostId:
-                        room.hostId,
+                        dayVotes:
+                            Array.from(room.dayVotes.entries()).map(
+                                ([voterId, targetId]) => ({ voterId, targetId })
+                            ),
 
-                    timerEndsAt:
-                        room.timerEndsAt
-
-                },
-
-                stats: {
-                    totalPlayedMs: getTotalPlayedMs(),
-                    totalNightsPlayed: room.totalNightsPlayed,
-                    playerCount: room.players.length
-                },
-
-                players:
-                    publicPlayers(true),
-
-                wolfVotes:
-                    getWolfVoteStateForAdmin(),
-
-                dayVotes:
-                    Array.from(
-                        room.dayVotes.entries()
-                    ).map(
-                        ([voterId, targetId]) => ({
-
-                            voterId,
-
-                            targetId
-
-                        })
-                    ),
-
-                pendingHunter:
-                    room.pendingHunter,
-
-                logs:
-                    room.logs.slice(-100),
-
-                adminLogs:
-                    room.adminLogs.slice(-200),
-
-                audioConfig:
-                    publicAudioConfig()
+                        pendingHunter: room.pendingHunter,
+                        logs: room.logs.slice(-100),
+                        adminLogs: room.adminLogs.slice(-200),
+                        audioConfig: publicAudioConfig()
+                    }
+                );
 
             }
         );
 
     }
 
-    sendTestObserverState();
-
 }
-
 
 /* =========================================================
    TIMER
