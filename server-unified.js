@@ -3515,7 +3515,14 @@ function endGame(
     setTimeout(
         () => {
 
-            resetRoom();
+            // Kết thúc ván: reset dữ liệu ván trước rồi đưa toàn bộ
+            // người chơi thật về màn chọn ROOM 01 / ROOM 02.
+            resetRoom("Ván kết thúc - trả người chơi về trang chọn ROOM.");
+
+            roomEmit("returnToRoomSelector", {
+                reason: "gameEnded",
+                message: "Ván đã kết thúc. Chọn ROOM để chơi ván tiếp theo."
+            });
 
         },
         5000
