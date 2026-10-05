@@ -5874,6 +5874,12 @@ io.on(
             "startGame",
             () => {
 
+                // Reject duplicate starts before changing players, roles or filler bots.
+                if (room.started) {
+                    socket.emit("actionError", { message: "Game đang chạy." });
+                    return;
+                }
+
                 const player =
                     findPlayer(
                         socket.data.playerId
