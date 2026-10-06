@@ -4488,6 +4488,87 @@ if (typeof accountSessionGuardTicker.unref === "function") {
     accountSessionGuardTicker.unref();
 }
 
+const voiceEpochSecret = require("crypto").randomBytes(32);
+// Push-to-talk audio: authorization deliberately mirrors chatMessage below.
+function voiceChatRecipients(state, player, channel) {
+    if (!player || !player.connected) return null;
+    if (channel === "couple") {
+        const lover = state.players.find(p => p.id === player.loverId);
+        return player.alive && lover?.alive ? [player, lover].filter(p => p.connected) : null;
+    }
+    if (channel !== "auto") return null;
+    if (!state.started && state.phase === "lobby") return state.players.filter(p => p.connected);
+    if (!player.alive) return state.players.filter(p => !p.alive && p.connected);
+    if (state.phase === "daySpeech") return state.players.filter(p => p.connected);
+    if (state.phase === "night" && player.role === "Sói")
+        return state.players.filter(p => p.connected && (!p.alive || p.role === "Sói" || player.loverId === p.id));
+    return null;
+}
+function installRoomVoice(socket) {
+    let active = null, serial = 0, policyWindow = 0, policyCount = 0, startWindow = 0, startCount = 0;
+    const snapshot = () => require("crypto").createHmac("sha256", voiceEpochSecret).update(JSON.stringify([room.id, room.started, room.phase, room.nightNumber,
+        room.timerToken, room.players.map(p => [p.id, p.connected, p.alive, p.role, p.loverId])])).digest("hex");
+    function stopVoice() {
+        if (!active) return;
+        for (const id of active.listeners) io.to(id).emit("voiceSpeaker", {roomId:active.roomId, playerId:active.playerId, active:false});
+        active = null;
+    }
+    function policy() {
+        const p = findPlayer(socket.data.playerId);
+        return {roomId:room.id, epoch:snapshot(), channels:["auto", "couple"].filter(c => voiceChatRecipients(room,p,c)),
+            autoLabel:!room.started && room.phase === "lobby" ? "Phòng chờ" : (!p?.alive ? "Người chết" : room.phase === "night" ? "Sói" : "Chung")};
+    }
+    socket.on("voicePolicy", (_data, ack) => {
+        const now = Date.now();
+        if (now-policyWindow>1000) {policyWindow=now;policyCount=0;}
+        if (++policyCount>8) return;
+        if (typeof ack === "function") ack(policy());
+    });
+    socket.on("voiceStart", (data, ack) => {
+        const now=Date.now();
+        if(now-startWindow>=1000){startWindow=now;startCount=0;}
+        if(++startCount>8){stopVoice();if(typeof ack==="function")ack({ok:false,message:"Thao tác mic quá nhanh. Hãy thử lại sau một giây."});return;}
+        const p = findPlayer(socket.data.playerId), current=policy();
+        stopVoice();
+        if (!p || data?.roomId !== room.id || data?.epoch !== current.epoch || !current.channels.includes(data?.channel)) {
+            if (typeof ack === "function") ack({ok:false, message:"Kênh nói đang khóa hoặc trạng thái phòng đã đổi."});
+            return;
+        }
+        active={roomId:room.id,playerId:p.id,channel:data.channel,epoch:current.epoch,
+            session:socket.id+":"+(++serial),listeners:new Set(),last:Date.now(),window:Date.now(),count:0,sequence:-1};
+        if (typeof ack === "function") ack({ok:true,session:active.session,roomId:room.id});
+    });
+    socket.on("voiceFrame", data => {
+        if (!active || data?.session !== active.session) return;
+        const p=findPlayer(socket.data.playerId), recipients=voiceChatRecipients(room,p,active.channel), now=Date.now();
+        if (!p || p.id!==active.playerId || room.id!==active.roomId || snapshot()!==active.epoch || !recipients) {
+            stopVoice();socket.emit("voiceRevoked");return;
+        }
+        if (!Buffer.isBuffer(data.audio) || data.audio.length!==2560 || !Number.isSafeInteger(data.sequence) || data.sequence<=active.sequence) return;
+        if(now-active.window>=1000){active.window=now;active.count=0;}
+        if (++active.count>20) {stopVoice();socket.emit("voiceRevoked");return;}
+        active.last=now;active.sequence=data.sequence;
+        for(const recipient of recipients) {
+            if(recipient.id===p.id) continue;
+            if(!active.listeners.has(recipient.id)) {
+                active.listeners.add(recipient.id);
+                io.to(recipient.id).emit("voiceSpeaker",{roomId:room.id,playerId:p.id,active:true});
+            }
+            io.to(recipient.id).volatile.emit("voiceFrame",{roomId:room.id,playerId:p.id,session:active.session,sequence:data.sequence,audio:data.audio});
+        }
+    });
+    socket.on("voiceStop", stopVoice);
+    socket.on("leaveRoom", stopVoice);
+    socket.on("disconnect", () => {stopVoice();clearInterval(sweep);});
+    // Run each sweep in the socket's room, including after a room switch.
+    const sweep=setInterval(()=>roomContext.run({roomId:normalizeRoomId(socket.data.roomId)},()=>{
+        if(active && (Date.now()-active.last>1200 || room.id!==active.roomId || snapshot()!==active.epoch)) {
+            stopVoice();socket.emit("voiceRevoked");
+        }
+    }),250);
+    sweep.unref?.();
+}
+
 io.on(
     "connection",
     socket => {
@@ -4517,6 +4598,7 @@ io.on(
         };
 
         socket.join(socket.data.roomId);
+        installRoomVoice(socket);
 
         socket.emit("audioConfigChanged", publicAudioConfig());
 
@@ -7643,3 +7725,4 @@ server.listen(
 
     }
 );
+
