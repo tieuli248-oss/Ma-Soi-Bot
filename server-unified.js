@@ -3482,45 +3482,36 @@ function playerWonMatch(player, winner) {
     return null;
 }
 
-async function recordMatchAnalytics(winner, message) {
-    if (!ADMIN_PASSWORD || !room.gameStartedAt) return;
-
-    const endedAt = Date.now();
-    const realPlayers = room.players.filter(p => !p.isBot);
-    const payload = {
-        externalMatchId: `${room.id}:${room.gameStartedAt}`,
-        roomId: room.id,
-        startedAt: new Date(room.gameStartedAt).toISOString(),
-        endedAt: new Date(endedAt).toISOString(),
-        winner: String(winner || "Hòa"),
-        message: String(message || ""),
-        totalPlayers: room.players.length,
-        botCount: room.players.filter(p => p.isBot).length,
-        players: realPlayers.map(p => ({
-            accountId: p.accountId || null,
-            name: p.name,
-            role: p.role || null,
-            won: playerWonMatch(p, winner),
-            leftGame: p.leftGame === true,
-            alive: p.alive === true
-        }))
-    };
-
-    try {
-        const response = await fetch(ACCOUNT_API_URL + "/api/admin/matches", {
-            method: "POST",
-            headers: {
-                "content-type": "application/json",
-                "x-admin-key": ADMIN_PASSWORD
-            },
-            body: JSON.stringify(payload)
-        });
-        if (!response.ok) {
-            const text = await response.text().catch(() => "");
-            console.error("Analytics API rejected match:", response.status, text.slice(0, 300));
+async function recordMatchAnalytics(winner, message, startedAt=room.gameStartedAt, isTest=room.testMode===true) {
+    if (!ADMIN_PASSWORD || !startedAt) return;
+    const realPlayers=room.players.filter(p=>!p.isBot),roomId=room.id;
+    const recipients=realPlayers.map(p=>({accountId:String(p.accountId||''),socketId:p.id}));
+    const payload={externalMatchId:`${roomId}:${startedAt}`,roomId,startedAt:new Date(startedAt).toISOString(),
+        endedAt:new Date().toISOString(),winner:String(winner||'Hòa'),message:String(message||''),
+        totalPlayers:room.players.length,botCount:room.players.filter(p=>p.isBot).length,isTest,
+        players:realPlayers.map(p=>({accountId:p.accountId||null,name:p.name,role:p.role||null,
+            won:playerWonMatch(p,winner),leftGame:p.leftGame===true,alive:p.alive===true}))};
+    for(let attempt=0;attempt<5;attempt++){
+        try{
+            const response=await fetch(ACCOUNT_API_URL+'/api/admin/matches',{
+                method:'POST',headers:{'content-type':'application/json','x-admin-key':ADMIN_PASSWORD},
+                body:JSON.stringify(payload),signal:AbortSignal.timeout(10000)});
+            const result=await response.json().catch(()=>({}));
+            if(response.ok && result.success){
+                for(const recipient of recipients){
+                    const reward=(result.rewards||[]).find(r=>String(r.accountId)===recipient.accountId);
+                    io.to(recipient.socketId).emit('matchRewards',{roomId,matchId:result.matchId,
+                        accountId:recipient.accountId,coins:reward?.coins||0,balance:reward?.balance??null,
+                        isTest,duplicate:!!result.duplicate});
+                }
+                return;
+            }
+            if(response.status<500){console.error('Match settlement rejected:',response.status,result.message||'');return;}
+            throw Error('Account API '+response.status);
+        }catch(error){
+            if(attempt===4){console.error('Không thể lưu kết quả/thưởng trận sau 5 lần:',payload.externalMatchId,error.message);return;}
+            await new Promise(resolve=>setTimeout(resolve,[500,1500,4000,10000][attempt]));
         }
-    } catch (err) {
-        console.error("Không thể lưu analytics trận:", err?.message || err);
     }
 }
 
@@ -3535,13 +3526,15 @@ function endGame(
 ) {
 
     if (
-        !room.started
+        !room.started || room.phase === "ended"
     ) {
 
         return;
 
     }
 
+    const completedStartedAt=room.gameStartedAt;
+    const completedTestMode=room.testMode===true;
     stopTimer();
     stopGamePlayClock();
 
@@ -3597,7 +3590,7 @@ function endGame(
 
     // Lưu lịch sử trận vào PostgreSQL của Account API để Admin thống kê theo tháng.
     // Không await để việc ghi thống kê không làm chậm kết thúc ván.
-    recordMatchAnalytics(winner, message);
+    recordMatchAnalytics(winner, message, completedStartedAt, completedTestMode);
 
     /*
      * Reset lobby sau một khoảng ngắn
@@ -7725,4 +7718,5 @@ server.listen(
 
     }
 );
+
 
