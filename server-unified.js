@@ -4489,19 +4489,19 @@ if (typeof accountSessionGuardTicker.unref === "function") {
 }
 
 const voiceEpochSecret = require("crypto").randomBytes(32);
-// Push-to-talk audio: authorization deliberately mirrors chatMessage below.
+// Single microphone: public day, wolves at night, otherwise living lovers privately.
 function voiceChatRecipients(state, player, channel) {
     if (!player || !player.connected) return null;
-    if (channel === "couple") {
-        const lover = state.players.find(p => p.id === player.loverId);
-        return player.alive && lover?.alive ? [player, lover].filter(p => p.connected) : null;
-    }
     if (channel !== "auto") return null;
     if (!state.started && state.phase === "lobby") return state.players.filter(p => p.connected);
     if (!player.alive) return state.players.filter(p => !p.alive && p.connected);
     if (state.phase === "daySpeech") return state.players.filter(p => p.connected);
     if (state.phase === "night" && player.role === "Sói")
         return state.players.filter(p => p.connected && (!p.alive || p.role === "Sói" || player.loverId === p.id));
+    if (state.phase === "night" && player.loverId) {
+        const lover = state.players.find(p => p.id === player.loverId);
+        if (lover?.alive) return [player, lover].filter(p => p.connected);
+    }
     return null;
 }
 function installRoomVoice(socket) {
@@ -4515,7 +4515,7 @@ function installRoomVoice(socket) {
     }
     function policy() {
         const p = findPlayer(socket.data.playerId);
-        return {roomId:room.id, epoch:snapshot(), channels:["auto", "couple"].filter(c => voiceChatRecipients(room,p,c)),
+        return {roomId:room.id, epoch:snapshot(), channels:["auto"].filter(c => voiceChatRecipients(room,p,c)),
             autoLabel:!room.started && room.phase === "lobby" ? "Phòng chờ" : (!p?.alive ? "Người chết" : room.phase === "night" ? "Sói" : "Chung")};
     }
     socket.on("voicePolicy", (_data, ack) => {
