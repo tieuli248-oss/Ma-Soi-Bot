@@ -4503,13 +4503,13 @@ function installRoomVoice(socket) {
         room.timerToken, room.players.map(p => [p.id, p.connected, p.alive, p.role, p.loverId])])).digest("hex");
     function stopVoice() {
         if (!active) return;
-        for (const id of active.listeners) io.to(id).emit("voiceSpeaker", {roomId:active.roomId, playerId:active.playerId, active:false});
+        for (const id of active.listeners) io.to(id).emit("voiceSpeaker", {roomId:active.roomId, playerId:active.playerId, session:active.session, epoch:active.epoch, active:false});
         active = null;
     }
     function policy() {
         const p = findPlayer(socket.data.playerId);
         return {roomId:room.id, epoch:snapshot(), channels:["auto"].filter(c => voiceChatRecipients(room,p,c)),
-            autoLabel:!room.started && room.phase === "lobby" ? "Phòng chờ" : (!p?.alive ? "Người chết" : room.phase === "night" ? "Sói" : "Chung")};
+            autoLabel:!room.started && room.phase === "lobby" ? "Phòng chờ" : (!p?.alive ? "Người chết" : room.phase === "night" ? (p.role === "Sói" ? "Ban đêm" : "Couple") : "Chung")};
     }
     socket.on("voicePolicy", (_data, ack) => {
         const now = Date.now();
@@ -4528,7 +4528,7 @@ function installRoomVoice(socket) {
             return;
         }
         active={roomId:room.id,playerId:p.id,channel:data.channel,epoch:current.epoch,
-            session:socket.id+":"+(++serial),listeners:new Set(),last:Date.now(),window:Date.now(),count:0,sequence:-1};
+            session:socket.id+":"+(++serial),listeners:new Set(),last:Date.now(),tokenAt:Date.now(),tokens:24,sequence:-1};
         if (typeof ack === "function") ack({ok:true,session:active.session,roomId:room.id});
     });
     socket.on("voiceFrame", data => {
@@ -4538,16 +4538,19 @@ function installRoomVoice(socket) {
             stopVoice();socket.emit("voiceRevoked");return;
         }
         if (!Buffer.isBuffer(data.audio) || data.audio.length!==2560 || !Number.isSafeInteger(data.sequence) || data.sequence<=active.sequence) return;
-        if(now-active.window>=1000){active.window=now;active.count=0;}
-        if (++active.count>20) {stopVoice();socket.emit("voiceRevoked");return;}
+        // Allow a short network burst without revoking a valid push-to-talk session.
+        active.tokens=Math.min(24,active.tokens+Math.max(0,now-active.tokenAt)*16/1000);
+        active.tokenAt=now;
+        if(active.tokens<1)return;
+        active.tokens-=1;
         active.last=now;active.sequence=data.sequence;
         for(const recipient of recipients) {
             if(recipient.id===p.id) continue;
             if(!active.listeners.has(recipient.id)) {
                 active.listeners.add(recipient.id);
-                io.to(recipient.id).emit("voiceSpeaker",{roomId:room.id,playerId:p.id,active:true});
+                io.to(recipient.id).emit("voiceSpeaker",{roomId:room.id,playerId:p.id,session:active.session,epoch:active.epoch,active:true});
             }
-            io.to(recipient.id).volatile.emit("voiceFrame",{roomId:room.id,playerId:p.id,session:active.session,sequence:data.sequence,audio:data.audio});
+            io.to(recipient.id).volatile.emit("voiceFrame",{roomId:room.id,playerId:p.id,session:active.session,epoch:active.epoch,sequence:data.sequence,audio:data.audio});
         }
     });
     socket.on("voiceStop", stopVoice);
