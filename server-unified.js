@@ -4482,7 +4482,12 @@ if (typeof accountSessionGuardTicker.unref === "function") {
 }
 
 const voiceEpochSecret = require("crypto").randomBytes(32);
-// Single microphone: public day, wolves at night, otherwise living lovers privately.
+// Three room-wide slots; occupancy never exposes a player's identity.
+const roomVoiceSlots=new Map();
+function voiceSlotsFor(roomId){let slots=roomVoiceSlots.get(roomId);if(!slots){slots=new Map();roomVoiceSlots.set(roomId,slots);}return slots;}
+function publicVoiceSlots(roomId){const slots=roomVoiceSlots.get(roomId);return [1,2,3].map(slot=>({slot,busy:!!slots?.has(slot)}));}
+function broadcastVoiceSlots(roomId){io.to(roomId).emit('voiceSlots',{roomId,slots:publicVoiceSlots(roomId)});}
+// Audience rules remain identical for every slot.
 function voiceChatRecipients(state, player, channel) {
     if (!player || !player.connected) return null;
     if (channel !== "auto") return null;
@@ -4503,12 +4508,14 @@ function installRoomVoice(socket) {
         room.timerToken, room.players.map(p => [p.id, p.connected, p.alive, p.role, p.loverId])])).digest("hex");
     function stopVoice() {
         if (!active) return;
-        for (const id of active.listeners) io.to(id).emit("voiceSpeaker", {roomId:active.roomId, playerId:active.playerId, session:active.session, epoch:active.epoch, active:false});
+        const slots=roomVoiceSlots.get(active.roomId);
+        if(slots?.get(active.slot)?.session===active.session){slots.delete(active.slot);if(!slots.size)roomVoiceSlots.delete(active.roomId);broadcastVoiceSlots(active.roomId);}
+        for (const id of active.listeners) io.to(id).emit("voiceSpeaker", {roomId:active.roomId, streamId:active.session, session:active.session, epoch:active.epoch, active:false});
         active = null;
     }
     function policy() {
         const p = findPlayer(socket.data.playerId);
-        return {roomId:room.id, epoch:snapshot(), channels:["auto"].filter(c => voiceChatRecipients(room,p,c)),
+        return {roomId:room.id, epoch:snapshot(), slots:publicVoiceSlots(room.id),capacity:3, channels:["auto"].filter(c => voiceChatRecipients(room,p,c)),
             autoLabel:!room.started && room.phase === "lobby" ? "Phòng chờ" : (!p?.alive ? "Người chết" : room.phase === "night" ? (p.role === "Sói" ? "Ban đêm" : "Couple") : "Chung")};
     }
     socket.on("voicePolicy", (_data, ack) => {
@@ -4527,9 +4534,19 @@ function installRoomVoice(socket) {
             if (typeof ack === "function") ack({ok:false, message:"Kênh nói đang khóa hoặc trạng thái phòng đã đổi."});
             return;
         }
-        active={roomId:room.id,playerId:p.id,channel:data.channel,epoch:current.epoch,
-            session:socket.id+":"+(++serial),listeners:new Set(),last:Date.now(),tokenAt:Date.now(),tokens:24,sequence:-1};
-        if (typeof ack === "function") ack({ok:true,session:active.session,roomId:room.id});
+        const requestedSlot=data?.slot;
+        if(!Number.isInteger(requestedSlot)||requestedSlot<1||requestedSlot>3){
+            if(typeof ack==='function')ack({ok:false,message:'Chọn mic 1, 2 hoặc 3.',slots:publicVoiceSlots(room.id)});return;
+        }
+        const slots=voiceSlotsFor(room.id);
+        if(slots.has(requestedSlot)){
+            if(typeof ack==='function')ack({ok:false,message:'Mic này đang bận. Chọn mic khác hoặc chờ.',slots:publicVoiceSlots(room.id)});return;
+        }
+        active={slot:requestedSlot,roomId:room.id,playerId:p.id,channel:data.channel,epoch:current.epoch,
+            session:require("crypto").randomUUID(),listeners:new Set(),last:Date.now(),tokenAt:Date.now(),tokens:24,sequence:-1};
+        slots.set(requestedSlot,{session:active.session,socketId:socket.id});
+        if (typeof ack === "function") ack({ok:true,session:active.session,slot:active.slot,roomId:room.id,slots:publicVoiceSlots(room.id)});
+        broadcastVoiceSlots(room.id);
     });
     socket.on("voiceFrame", data => {
         if (!active || data?.session !== active.session) return;
@@ -4548,13 +4565,14 @@ function installRoomVoice(socket) {
             if(recipient.id===p.id) continue;
             if(!active.listeners.has(recipient.id)) {
                 active.listeners.add(recipient.id);
-                io.to(recipient.id).emit("voiceSpeaker",{roomId:room.id,playerId:p.id,session:active.session,epoch:active.epoch,active:true});
+                io.to(recipient.id).emit("voiceSpeaker",{roomId:room.id,streamId:active.session,session:active.session,epoch:active.epoch,active:true});
             }
-            io.to(recipient.id).volatile.emit("voiceFrame",{roomId:room.id,playerId:p.id,session:active.session,epoch:active.epoch,sequence:data.sequence,audio:data.audio});
+            io.to(recipient.id).volatile.emit("voiceFrame",{roomId:room.id,streamId:active.session,session:active.session,epoch:active.epoch,sequence:data.sequence,audio:data.audio});
         }
     });
     socket.on("voiceStop", stopVoice);
     socket.on("leaveRoom", stopVoice);
+    socket.on("joinRoom", stopVoice);
     socket.on("disconnect", () => {stopVoice();clearInterval(sweep);});
     // Run each sweep in the socket's room, including after a room switch.
     const sweep=setInterval(()=>roomContext.run({roomId:normalizeRoomId(socket.data.roomId)},()=>{
