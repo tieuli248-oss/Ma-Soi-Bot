@@ -2181,6 +2181,21 @@ function checkWinner() {
    START GAME
 ========================================================= */
 
+function keepHumanOnlyRoles(players, roles) {
+    const humanOnly = new Set(["Phù thủy", "Tiên tri"]);
+    for (let i = 0; i < players.length; i++) {
+        if (!players[i].isBot || !humanOnly.has(roles[i])) continue;
+        const candidates = players.map((player, index) => ({ player, index }))
+            .filter(({ player, index }) => !player.isBot && !humanOnly.has(roles[index]));
+        if (!candidates.length) {
+            roles[i] = "Dân";
+            continue;
+        }
+        const j = candidates[Math.floor(Math.random() * candidates.length)].index;
+        [roles[i], roles[j]] = [roles[j], roles[i]];
+    }
+}
+
 function startGame() {
 
     if (
@@ -2309,6 +2324,10 @@ function startGame() {
             fixedPos++;
         }
     }
+
+    // These two roles require a human, including after test-role overrides.
+    keepHumanOnlyRoles(shuffledPlayers, shuffledRoles);
+    room.roleComposition = [...shuffledRoles];
 
     shuffledPlayers.forEach(
         (player, index) => {
