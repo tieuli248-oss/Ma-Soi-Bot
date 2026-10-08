@@ -67,6 +67,19 @@ function ensureAudioDir() {
 const server = http.createServer((req, res) => {
     const rawUrl = String(req.url || "/");
 
+    if (rawUrl.split("?")[0] === "/internal/social-presence") {
+        if (!ADMIN_PASSWORD || String(req.headers["x-admin-key"] || "") !== ADMIN_PASSWORD) {
+            res.writeHead(403, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+            return res.end(JSON.stringify({ success: false }));
+        }
+        if (req.method !== "GET") {
+            res.writeHead(405, { "Content-Type": "application/json", "Allow": "GET" });
+            return res.end(JSON.stringify({ success: false }));
+        }
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        return res.end(JSON.stringify({ success: true, players: socialPresenceSnapshot(), updatedAt: Date.now() }));
+    }
+
     if (rawUrl.startsWith("/audio/")) {
         try {
             ensureAudioDir();
@@ -217,6 +230,21 @@ function createRoom(id) { return {
 const rooms = new Map(
     ROOM_IDS.map(id => [id, createRoom(id)])
 );
+
+function socialPresenceSnapshot() {
+    const players = [];
+    for (const current of rooms.values()) {
+        for (const player of current.players) {
+            if (player.isBot || !player.accountId || player.connected !== true || player.leftGame === true) continue;
+            players.push({
+                accountId: String(player.accountId),
+                roomId: current.id,
+                state: current.started === true ? "playing" : "lobby"
+            });
+        }
+    }
+    return players;
+}
 
 function normalizeRoomId(value) {
     return ROOM_IDS.includes(String(value || "").toUpperCase())
