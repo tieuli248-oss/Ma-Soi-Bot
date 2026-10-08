@@ -1443,8 +1443,7 @@ function sendWolfVoteState() {
 
     if (
         !room.night ||
-        room.phase !== "night" ||
-        !room.night.mainActionsOpen
+        room.phase !== "night"
     ) {
 
         return;
@@ -1563,7 +1562,7 @@ function sendWolfVoteState() {
 
     };
 
-    aliveWolves().forEach(
+    room.players.filter(player => player.role === "Sói").forEach(
         wolf => {
 
             if (
@@ -2654,6 +2653,7 @@ function lockNightMainActions(nightRef = room.night) {
 
     lockWitchPoisonSelection();
     room.night.wolfTargetId = calculateWolfTarget()?.id || null;
+    sendWolfVoteState();
 
     roomEmit("nightMainActionsLocked", {
         nightNumber: room.nightNumber,
@@ -3957,11 +3957,10 @@ function reconnectState(
     if (
         room.phase === "night" &&
         player.role === "Sói" &&
-        player.alive &&
-        room.night?.mainActionsOpen === true
+        room.night
     ) {
 
-        sendWolfTargets();
+        if (player.alive && room.night.mainActionsOpen === true) sendWolfTargets();
 
         sendWolfVoteState();
 
@@ -4516,7 +4515,7 @@ function voiceChatRecipients(state, player, channel) {
     if (!player.alive) return state.players.filter(p => !p.alive && p.connected);
     if (state.phase === "daySpeech") return state.players.filter(p => p.connected);
     if (state.phase === "night" && player.role === "Sói")
-        return state.players.filter(p => p.connected && (!p.alive || p.role === "Sói" || player.loverId === p.id));
+        return state.players.filter(p => p.connected && p.alive && (p.role === "Sói" || player.loverId === p.id));
     if (state.phase === "night" && player.loverId) {
         const lover = state.players.find(p => p.id === player.loverId);
         if (lover?.alive) return [player, lover].filter(p => p.connected);
