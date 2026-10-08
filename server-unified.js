@@ -4259,7 +4259,8 @@ function runTestBotNight() {
     if (!room.started || room.phase !== "night" || !room.night || !room.players.some(p => p.isBot && p.alive)) return;
     const host = testHostPlayer();
 
-    if (!room.night.witchActionOpen) {
+    // Poison runs alongside the main roles; it must not block their actions.
+    if (room.night.mainActionsOpen === true) {
         const botWolves = room.players.filter(p => p.isBot && p.alive && p.role === "Sói");
         const wolfCandidates = alivePlayers().filter(p => p.role !== "Sói");
         if (botWolves.length && wolfCandidates.length) {
@@ -4301,6 +4302,12 @@ function runTestBotNight() {
             seer.seerUsedNight = true;
             seer._testSeerNight = room.nightNumber;
             const result = target.role === "Dân" ? "THIỆN" : "KHÔNG RÕ";
+            room.night.seerInspections.push({
+                seerId: seer.id, seerName: seer.name,
+                targetId: target.id, targetName: target.name,
+                result: target.role === "Dân" ? "🟢 THIỆN" : "❓ KHÔNG RÕ",
+                time: Date.now()
+            });
             testEmitHostEvent("🤖 " + seer.name + " (Tiên tri) soi " + target.name + " → " + result + ".");
         }
     }
