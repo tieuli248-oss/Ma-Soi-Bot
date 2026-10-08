@@ -4482,15 +4482,32 @@ if (typeof accountSessionGuardTicker.unref === "function") {
 }
 
 const voiceEpochSecret = require("crypto").randomBytes(32);
-// Three room-wide slots; occupancy never exposes a player's identity.
+// Exactly three visible buttons; private server pools isolate nighttime occupancy.
 const roomVoiceSlots=new Map();
 const VOICE_MAX_HOLD_MS=15000,VOICE_COOLDOWN_MS=3000;
 const voiceCooldowns=new Map();
 const voiceCooldownCleaner=setInterval(()=>{const now=Date.now();for(const[key,until]of voiceCooldowns)if(until<=now)voiceCooldowns.delete(key);},3000);
 voiceCooldownCleaner.unref?.();
-function voiceSlotsFor(roomId){let slots=roomVoiceSlots.get(roomId);if(!slots){slots=new Map();roomVoiceSlots.set(roomId,slots);}return slots;}
-function publicVoiceSlots(roomId){const slots=roomVoiceSlots.get(roomId);return [1,2,3].map(slot=>({slot,busy:!!slots?.has(slot)}));}
-function broadcastVoiceSlots(roomId){io.to(roomId).emit('voiceSlots',{roomId,slots:publicVoiceSlots(roomId)});}
+function voiceSlotGroup(state,player){
+    if(!player?.connected)return null;
+    if(state.phase!=='night')return 'shared';
+    if(!player.alive)return 'dead';
+    if(player.role==='Sói')return 'wolves';
+    const lover=state.players.find(p=>p.id===player.loverId);
+    if(lover?.alive&&lover.loverId===player.id)return 'couple:'+JSON.stringify([String(player.id),String(lover.id)].sort());
+    return null;
+}
+const voicePoolKey=(roomId,group)=>JSON.stringify([roomId,group]);
+const voiceScopeFor=(roomId,group)=>group?require('crypto').createHmac('sha256',voiceEpochSecret).update(voicePoolKey(roomId,group)).digest('hex'):null;
+const voiceEpochFor=state=>require('crypto').createHmac('sha256',voiceEpochSecret).update(JSON.stringify([state.id,state.started,state.phase,state.nightNumber,state.timerToken,state.players.map(p=>[p.id,p.connected,p.alive,p.role,p.loverId])])).digest('hex');
+function voiceSlotsFor(roomId,group){const key=voicePoolKey(roomId,group);let slots=roomVoiceSlots.get(key);if(!slots){slots=new Map();roomVoiceSlots.set(key,slots);}return slots;}
+function publicVoiceSlots(roomId,group){const slots=group?roomVoiceSlots.get(voicePoolKey(roomId,group)):null;return [1,2,3].map(slot=>({slot,busy:!!slots?.has(slot)}));}
+function broadcastVoiceSlots(roomId,group){
+    const state=rooms.get(roomId);if(!state||!group)return;
+    const data={roomId,scope:voiceScopeFor(roomId,group),epoch:voiceEpochFor(state),slots:publicVoiceSlots(roomId,group)};
+    // Do not even send an occupancy event to outsiders: its timing could reveal activity.
+    for(const player of state.players)if(player.connected&&voiceSlotGroup(state,player)===group)io.to(player.id).emit('voiceSlots',data);
+}
 // Audience rules remain identical for every slot.
 function voiceChatRecipients(state, player, channel) {
     if (!player || !player.connected) return null;
@@ -4508,8 +4525,7 @@ function voiceChatRecipients(state, player, channel) {
 }
 function installRoomVoice(socket) {
     let active = null, serial = 0, policyWindow = 0, policyCount = 0, startWindow = 0, startCount = 0;
-    const snapshot = () => require("crypto").createHmac("sha256", voiceEpochSecret).update(JSON.stringify([room.id, room.started, room.phase, room.nightNumber,
-        room.timerToken, room.players.map(p => [p.id, p.connected, p.alive, p.role, p.loverId])])).digest("hex");
+    const snapshot = () => voiceEpochFor(room);
     const cooldownKey=()=>{const p=findPlayer(socket.data.playerId);return p?.accountId?'account:'+p.accountId:'socket:'+socket.id;};
     const cooldownRemaining=()=>Math.max(0,(voiceCooldowns.get(cooldownKey())||0)-Date.now());
     function stopVoice() {
@@ -4521,14 +4537,15 @@ function installRoomVoice(socket) {
             socket.emit('voiceLimit',{cooldownMs:VOICE_COOLDOWN_MS,maxHoldMs:VOICE_MAX_HOLD_MS});
             socket.emit('voiceRevoked',{reason:'limit',cooldownMs:VOICE_COOLDOWN_MS});
         }
-        const slots=roomVoiceSlots.get(active.roomId);
-        if(slots?.get(active.slot)?.session===active.session){slots.delete(active.slot);if(!slots.size)roomVoiceSlots.delete(active.roomId);broadcastVoiceSlots(active.roomId);}
+        const poolKey=voicePoolKey(active.roomId,active.group),slots=roomVoiceSlots.get(poolKey);
+        if(slots?.get(active.slot)?.session===active.session){slots.delete(active.slot);if(!slots.size)roomVoiceSlots.delete(poolKey);broadcastVoiceSlots(active.roomId,active.group);}
         for (const id of active.listeners) io.to(id).emit("voiceSpeaker", {roomId:active.roomId, streamId:active.session, session:active.session, epoch:active.epoch, active:false});
         active = null;
     }
     function policy() {
         const p = findPlayer(socket.data.playerId);
-        return {roomId:room.id, epoch:snapshot(), slots:publicVoiceSlots(room.id),capacity:3,maxHoldMs:VOICE_MAX_HOLD_MS,cooldownMs:cooldownRemaining(), channels:["auto"].filter(c => voiceChatRecipients(room,p,c)),
+        const group=voiceSlotGroup(room,p);
+        return {roomId:room.id, epoch:snapshot(),scope:voiceScopeFor(room.id,group),slots:publicVoiceSlots(room.id,group),capacity:3,maxHoldMs:VOICE_MAX_HOLD_MS,cooldownMs:cooldownRemaining(), channels:["auto"].filter(c => voiceChatRecipients(room,p,c)),
             autoLabel:!room.started && room.phase === "lobby" ? "Phòng chờ" : (!p?.alive ? "Người chết" : room.phase === "night" ? (p.role === "Sói" ? "Ban đêm" : "Couple") : "Chung")};
     }
     socket.on("voicePolicy", (_data, ack) => {
@@ -4545,33 +4562,34 @@ function installRoomVoice(socket) {
         if(active&&now<active.expiresAt){if(typeof ack==='function')ack({ok:false,message:'Bạn đang giữ mic. Thả mic trước khi chọn mic khác.'});return;}
         stopVoice();
         const wait=cooldownRemaining();
-        if(wait>0){if(typeof ack==='function')ack({ok:false,message:'Nghỉ '+Math.ceil(wait/1000)+' giây rồi chọn mic tiếp.',cooldownMs:wait,slots:publicVoiceSlots(room.id)});return;}
+        if(wait>0){if(typeof ack==='function')ack({ok:false,message:'Nghỉ '+Math.ceil(wait/1000)+' giây rồi chọn mic tiếp.',cooldownMs:wait,slots:current.slots});return;}
         if (!p || data?.roomId !== room.id || data?.epoch !== current.epoch || !current.channels.includes(data?.channel)) {
             if (typeof ack === "function") ack({ok:false, message:"Kênh nói đang khóa hoặc trạng thái phòng đã đổi."});
             return;
         }
         const requestedSlot=data?.slot;
         if(!Number.isInteger(requestedSlot)||requestedSlot<1||requestedSlot>3){
-            if(typeof ack==='function')ack({ok:false,message:'Chọn mic 1, 2 hoặc 3.',slots:publicVoiceSlots(room.id)});return;
+            if(typeof ack==='function')ack({ok:false,message:'Chọn mic 1, 2 hoặc 3.',slots:current.slots});return;
         }
-        const slots=voiceSlotsFor(room.id);
+        const group=voiceSlotGroup(room,p);if(!group){if(typeof ack==='function')ack({ok:false,message:'Mic đang khóa.'});return;}
+        const slots=voiceSlotsFor(room.id,group);
         if(slots.has(requestedSlot)){
-            if(typeof ack==='function')ack({ok:false,message:'Mic này đang bận. Chọn mic khác hoặc chờ.',slots:publicVoiceSlots(room.id)});return;
+            if(typeof ack==='function')ack({ok:false,message:'Mic này đang bận. Chọn mic khác hoặc chờ.',slots:current.slots});return;
         }
-        active={expiresAt:now+VOICE_MAX_HOLD_MS,cooldownKey:cooldownKey(),slot:requestedSlot,roomId:room.id,playerId:p.id,channel:data.channel,epoch:current.epoch,
+        active={expiresAt:now+VOICE_MAX_HOLD_MS,cooldownKey:cooldownKey(),group,slot:requestedSlot,roomId:room.id,playerId:p.id,channel:data.channel,epoch:current.epoch,
             session:require("crypto").randomUUID(),listeners:new Set(),last:Date.now(),tokenAt:Date.now(),tokens:24,sequence:-1};
         const grantedSession=active.session;
         active.limitTimer=setTimeout(()=>{if(active?.session===grantedSession)stopVoice();},VOICE_MAX_HOLD_MS);
         active.limitTimer.unref?.();
         slots.set(requestedSlot,{session:active.session,socketId:socket.id});
-        if (typeof ack === "function") ack({ok:true,session:active.session,slot:active.slot,roomId:room.id,maxHoldMs:VOICE_MAX_HOLD_MS,remainingMs:VOICE_MAX_HOLD_MS,slots:publicVoiceSlots(room.id)});
-        broadcastVoiceSlots(room.id);
+        if (typeof ack === "function") ack({ok:true,session:active.session,slot:active.slot,roomId:room.id,scope:current.scope,maxHoldMs:VOICE_MAX_HOLD_MS,remainingMs:VOICE_MAX_HOLD_MS,slots:publicVoiceSlots(room.id,group)});
+        broadcastVoiceSlots(room.id,group);
     });
     socket.on("voiceFrame", data => {
         if (!active || data?.session !== active.session) return;
         if(Date.now()>=active.expiresAt){stopVoice();return;}
         const p=findPlayer(socket.data.playerId), recipients=voiceChatRecipients(room,p,active.channel), now=Date.now();
-        if (!p || p.id!==active.playerId || room.id!==active.roomId || snapshot()!==active.epoch || !recipients) {
+        if (!p || p.id!==active.playerId || room.id!==active.roomId || snapshot()!==active.epoch || voiceSlotGroup(room,p)!==active.group || !recipients) {
             stopVoice();socket.emit("voiceRevoked");return;
         }
         if (!Buffer.isBuffer(data.audio) || data.audio.length!==2560 || !Number.isSafeInteger(data.sequence) || data.sequence<=active.sequence) return;
