@@ -2210,6 +2210,10 @@ function startGame() {
 
     }
 
+    if (room.players.filter(p => !p.isBot && p.connected !== false && p.leftGame !== true).length < 2) {
+        return { ok: false, message: "Cần ít nhất 2 người thật trong phòng để bắt đầu. Bot không được tính." };
+    }
+
     const count =
         room.players.length;
 
@@ -6078,6 +6082,13 @@ io.on(
                 const humans = room.players.filter(
                     p => !p.isBot && p.connected !== false && p.leftGame !== true
                 );
+
+                if (humans.length < 2) {
+                    socket.emit("actionError", {
+                        message: "Cần ít nhất 2 người thật trong phòng để bắt đầu. Bot không được tính."
+                    });
+                    return;
+                }
 
                 const notReady = humans.filter(
                     p => p.id !== room.hostId && p.ready !== true
