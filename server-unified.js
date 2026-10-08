@@ -77,7 +77,11 @@ const server = http.createServer((req, res) => {
             return res.end(JSON.stringify({ success: false }));
         }
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-        return res.end(JSON.stringify({ success: true, players: socialPresenceSnapshot(), updatedAt: Date.now() }));
+        return res.end(JSON.stringify({ success: true, players: socialPresenceSnapshot(),
+            rooms: [...rooms.values()].map(current => ({
+                id: current.id, started: current.started === true,
+                playerCount: current.players.length, capacity: MAX_PLAYERS
+            })), updatedAt: Date.now() }));
     }
 
     if (rawUrl.startsWith("/audio/")) {
