@@ -4443,10 +4443,31 @@ function runTestBotDayVote() {
     sendTestObserverState();
 }
 
+// Test-bot public daytime dialogue. No hidden-role information is consulted.
+// This is deterministic rule-based chatter, not a language model.
+function runTestBotDayDialogue() {
+    if (!room.started || room.phase !== "daySpeech" || !room.players.some(p=>p.isBot&&p.alive)) return;
+    const dayKey = String(room.nightNumber || 0);
+    if (room._testBotTalkDay === dayKey) return;
+    room._testBotTalkDay = dayKey;
+    const speakers=room.players.filter(p=>p.isBot&&p.alive).slice(0,3);
+    const utterances=[
+        "Mọi người cho mình nghe lý do nghi ngờ trước khi bỏ phiếu nhé.",
+        "Đừng vote vội, ai có thông tin công khai thì chia sẻ đi.",
+        "Mình đang theo dõi cách mọi người lập luận, chưa kết luận ai cả."
+    ];
+    for (let i=0;i<speakers.length;i++){
+        const bot=speakers[i],text=utterances[(i+Number(room.nightNumber||0))%utterances.length];
+        const payload={playerId:bot.id,playerName:bot.name,text,dead:false,wolfChat:false,coupleChat:false,chatType:"day"};
+        const recipients=room.players.filter(p=>p.connected && (p.alive || p.isAdmin));
+        storeChatHistory(payload,recipients);
+        for(const recipient of recipients) io.to(recipient.id).emit("chatMessage",payload);
+    }
+}
 const testBotTicker = setInterval(() => {
     for (const roomId of ROOM_IDS) {
         roomContext.run({ roomId }, () => {
-            try { runTestBotNight(); runTestBotDayVote(); }
+            try { runTestBotNight(); runTestBotDayDialogue(); runTestBotDayVote(); }
             catch (err) { console.error("[BOT][" + roomId + "]", err); }
         });
     }
