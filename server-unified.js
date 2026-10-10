@@ -4458,7 +4458,7 @@ function runTestBotDayDialogue() {
     ];
     for (let i=0;i<speakers.length;i++){
         const bot=speakers[i],text=utterances[(i+Number(room.nightNumber||0))%utterances.length];
-        const payload={playerId:bot.id,playerName:bot.name,text,dead:false,wolfChat:false,coupleChat:false,chatType:"day"};
+        const payload={playerId:bot.id,playerName:bot.name,text,dead:false,wolfChat:false,coupleChat:false,chatType:"public"};
         const recipients=room.players.filter(p=>p.connected && (p.alive || p.isAdmin));
         storeChatHistory(payload,recipients);
         for(const recipient of recipients) io.to(recipient.id).emit("chatMessage",payload);
