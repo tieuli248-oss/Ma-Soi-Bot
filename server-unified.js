@@ -5162,21 +5162,19 @@ io.on(
                 const accessToken = String(data?.accountToken || '').trim();
                 const takeoverToken = String(data?.takeoverToken || '').trim();
 
+                const rejectJoin = (message,code="JOIN_REJECTED") => {
+                    const payload = {message,code};
+                    socket.emit("enterError",payload);
+                    if (typeof ack === "function") ack({ok:false,...payload});
+                    console.warn("[JOIN] rejected",{roomId:room.id,code,message,socketId:socket.id});
+                };
                 console.log("[JOIN] request", { roomId: room.id, socketId: socket.id, name, deviceId: deviceId ? deviceId.slice(0, 18) : "", accountId });
 
                 if (
                     !name
                 ) {
 
-                    socket.emit(
-                        "enterError",
-                        {
-
-                            message:
-                                "Vui lòng nhập tên."
-
-                        }
-                    );
+                    rejectJoin("Vui lòng nhập tên.");
 
                     return;
 
@@ -5186,15 +5184,7 @@ io.on(
                     name.length > 16
                 ) {
 
-                    socket.emit(
-                        "enterError",
-                        {
-
-                            message:
-                                "Tên tối đa 16 ký tự."
-
-                        }
-                    );
+                    rejectJoin("Tên tối đa 16 ký tự.");
 
                     return;
 
@@ -5646,15 +5636,7 @@ io.on(
 
                     }
 
-                    socket.emit(
-                        "enterError",
-                        {
-
-                            message:
-                                "Game đang chạy. Chỉ người chơi cũ mới được vào lại."
-
-                        }
-                    );
+                    rejectJoin("Game đang chạy. Chỉ người chơi cũ mới được vào lại.");
 
                     return;
 
@@ -5740,15 +5722,7 @@ io.on(
                     MAX_PLAYERS
                 ) {
 
-                    socket.emit(
-                        "enterError",
-                        {
-
-                            message:
-                                "Phòng đã đủ 15 người."
-
-                        }
-                    );
+                    rejectJoin("Phòng đã đủ 15 người.");
 
                     return;
 
@@ -5767,15 +5741,7 @@ io.on(
                     sameDevice
                 ) {
 
-                    socket.emit(
-                        "enterError",
-                        {
-
-                            message:
-                                "Thiết bị này đã vào phòng."
-
-                        }
-                    );
+                    rejectJoin("Thiết bị này đã vào phòng.");
 
                     return;
 
@@ -5793,15 +5759,7 @@ io.on(
                     sameName
                 ) {
 
-                    socket.emit(
-                        "enterError",
-                        {
-
-                            message:
-                                "Tên này đã có người sử dụng."
-
-                        }
-                    );
+                    rejectJoin("Tên này đã có người sử dụng.");
 
                     return;
 
