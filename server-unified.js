@@ -4428,8 +4428,9 @@ function runTestBotDayVote() {
             if (host?.alive && host.role !== "Sói" && nonWolves.some(p => p.id === host.id) && Math.random() < 0.30) preferred = host;
             if (!preferred && nonWolves.length) preferred = nonWolves[Math.floor(Math.random() * nonWolves.length)];
         } else {
-            const wolves = candidates.filter(p => p.role === "Sói");
-            if (wolves.length && Math.random() < 0.62) preferred = wolves[Math.floor(Math.random() * wolves.length)];
+            // Fair-play: civilian bots must not read hidden roles to pick their vote.
+            // Until observation-based reasoning is implemented, choose from visible alive players.
+            preferred = null;
         }
         const target = chooseTestBotTarget(candidates, preferred);
         if (!target) continue;
