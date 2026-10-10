@@ -4428,8 +4428,9 @@ function runTestBotDayVote() {
             if (host?.alive && host.role !== "Sói" && nonWolves.some(p => p.id === host.id) && Math.random() < 0.30) preferred = host;
             if (!preferred && nonWolves.length) preferred = nonWolves[Math.floor(Math.random() * nonWolves.length)];
         } else {
-            const wolves = candidates.filter(p => p.role === "Sói");
-            if (wolves.length && Math.random() < 0.62) preferred = wolves[Math.floor(Math.random() * wolves.length)];
+            // Fair-play: civilian bots must not read hidden roles to pick their vote.
+            // Until observation-based reasoning is implemented, choose from visible alive players.
+            preferred = null;
         }
         const target = chooseTestBotTarget(candidates, preferred);
         if (!target) continue;
@@ -4442,10 +4443,49 @@ function runTestBotDayVote() {
     sendTestObserverState();
 }
 
+// Test-bot public daytime dialogue. No hidden-role information is consulted.
+// This is deterministic rule-based chatter, not a language model.
+// Free, local-rule bot conversation. Only public chat visible to living players is used.
+function runTestBotDayDialogue() {
+    if (!room.started || room.phase !== "daySpeech" || !room.players.some(p=>p.isBot&&p.alive)) return;
+    const dayKey=String(room.nightNumber||0);
+    const now=Date.now();
+    if(room._testBotTalkDay!==dayKey){
+        room._testBotTalkDay=dayKey;
+        room._testBotTalkLast=0;
+        room._testBotTalkSeen=0;
+        room._testBotTalkCount=0;
+    }
+    if((room._testBotTalkCount||0)>=4 || now-(room._testBotTalkLast||0)<18000)return;
+    const bots=room.players.filter(p=>p.isBot&&p.alive);
+    const visible=(room.chatHistory||[]).filter(m=>m.chatType==='public' && !m.dead && !m.wolfChat && !m.coupleChat);
+    const recent=visible.filter(m=>!String(m.playerId||'').startsWith('BOT-') && m.time>now-90000);
+    const latest=recent.at(-1);
+    if(!latest && room._testBotTalkCount>0)return;
+    if(latest && latest.time<=(room._testBotTalkSeen||0))return;
+    const count=room._testBotTalkCount||0;
+    const bot=bots[count%bots.length];
+    const target=latest?.playerName||'mọi người';
+    const words=String(latest?.text||'').toLocaleLowerCase('vi-VN');
+    // No guesses using hidden role, identity, or private chat.
+    let text;
+    if(!latest)text='Ai có lập luận hay bằng chứng công khai thì chia sẻ để mọi người cùng cân nhắc nhé.';
+    else if(/nghi|sói|wolf/.test(words))text='Mình nghe '+String(target).slice(0,24)+' nghi ngờ rồi. Có chứng cứ từ phiếu bầu hoặc lời nói không?';
+    else if(/vote|phiếu|bỏ phiếu/.test(words))text='Đừng chọn theo số đông vội. Mọi người giải thích lý do đổi phiếu được không?';
+    else if(/tại sao|vì sao|giải thích/.test(words))text='Mình nghĩ nên đối chiếu lời nói với những lượt bỏ phiếu đã công khai.';
+    else text='Mình đã nghe '+String(target).slice(0,24)+' nói. Ai muốn bổ sung ý kiến không?';
+    const payload={playerId:bot.id,playerName:bot.name,text,dead:false,wolfChat:false,coupleChat:false,chatType:'public'};
+    const recipients=room.players.filter(p=>p.connected&&p.alive);
+    storeChatHistory(payload,recipients);
+    for(const recipient of recipients)io.to(recipient.id).emit('chatMessage',payload);
+    room._testBotTalkSeen=latest?.time||now;
+    room._testBotTalkLast=now;
+    room._testBotTalkCount=count+1;
+}
 const testBotTicker = setInterval(() => {
     for (const roomId of ROOM_IDS) {
         roomContext.run({ roomId }, () => {
-            try { runTestBotNight(); runTestBotDayVote(); }
+            try { runTestBotNight(); runTestBotDayDialogue(); runTestBotDayVote(); }
             catch (err) { console.error("[BOT][" + roomId + "]", err); }
         });
     }
@@ -4587,7 +4627,62 @@ function voiceChatRecipients(state, player, channel) {
     }
     return null;
 }
+// Voice-to-text bot replies are explicitly opt-in, disabled by default.
+const BOT_VOICE_STT_ENABLED=process.env.BOT_VOICE_STT_ENABLED==='true' && process.env.BOT_FREE_ONLY!=='true' && !!process.env.OPENAI_API_KEY;
+function pcm16ToWav(pcm){
+    const wav=Buffer.alloc(44+pcm.length);
+    wav.write('RIFF',0);wav.writeUInt32LE(36+pcm.length,4);wav.write('WAVEfmt ',8);
+    wav.writeUInt32LE(16,16);wav.writeUInt16LE(1,20);wav.writeUInt16LE(1,22);
+    wav.writeUInt32LE(16000,24);wav.writeUInt32LE(32000,28);wav.writeUInt16LE(2,32);
+    wav.writeUInt16LE(16,34);wav.write('data',36);wav.writeUInt32LE(pcm.length,40);
+    pcm.copy(wav,44);return wav;
+}
+async function transcribeBotVoice(frames){
+    if(!BOT_VOICE_STT_ENABLED || frames.length<10)return '';
+    const ctrl=new AbortController(),timeout=setTimeout(()=>ctrl.abort(),12000);
+    try{
+        const form=new FormData();
+        form.append('file',new Blob([pcm16ToWav(Buffer.concat(frames))],{type:'audio/wav'}),'voice.wav');
+        form.append('model',process.env.BOT_VOICE_STT_MODEL||'whisper-1');
+        form.append('language','vi');
+        const response=await fetch('https://api.openai.com/v1/audio/transcriptions',{
+            method:'POST',headers:{authorization:'Bearer '+process.env.OPENAI_API_KEY},
+            body:form,signal:ctrl.signal
+        });
+        if(!response.ok)throw new Error('STT HTTP '+response.status);
+        const data=await response.json();return String(data.text||'').trim().slice(0,400);
+    }finally{clearTimeout(timeout);}
+}
+function botVoiceReply(transcript,bot,player){
+    const input=transcript.toLocaleLowerCase('vi-VN');
+    if(input.includes('vote')||input.includes('bỏ phiếu'))return 'Mình sẽ cân nhắc phiếu sau khi nghe lý do của mọi người.';
+    if(input.includes('sói')||input.includes('nghi'))return 'Có thể đáng nghi, nhưng mình muốn thêm bằng chứng từ cuộc thảo luận.';
+    if(input.includes('tại sao')||input.includes('vì sao'))return 'Mình chưa chắc chắn. Cứ đối chiếu diễn biến hôm nay đã.';
+    return 'Mình nghe ý của '+String(player.name||'bạn').slice(0,25)+' rồi. Có ai muốn bổ sung không?';
+}
+async function processBotVoiceUtterance(roomId,playerId,frames){
+    try{
+        const transcript=await transcribeBotVoice(frames);
+        if(!transcript)return;
+        roomContext.run({roomId},()=>{
+            if(!room.started||room.phase!=='daySpeech')return;
+            const player=findPlayer(playerId);
+            const bot=room.players.find(p=>p.isBot&&p.alive);
+            if(!player?.alive||!bot)return;
+            const text=botVoiceReply(transcript,bot,player);
+            const payload={playerId:bot.id,playerName:bot.name,text,dead:false,wolfChat:false,coupleChat:false,chatType:'public'};
+            const recipients=room.players.filter(p=>p.connected&&p.alive);
+            storeChatHistory(payload,recipients);
+            for(const recipient of recipients)io.to(recipient.id).emit('chatMessage',payload);
+        });
+    }catch(err){console.warn('[BOT-STT]',String(err.message||err).slice(0,120));}
+}
 function installRoomVoice(socket) {
+    let botVoiceConsent=false,lastBotTranscription=0;
+    socket.on('botVoiceConsent',(data,ack)=>{
+        botVoiceConsent=BOT_VOICE_STT_ENABLED && data?.enabled===true;
+        if(typeof ack==='function')ack({ok:botVoiceConsent || data?.enabled!==true,enabled:botVoiceConsent});
+    });
     let active = null, serial = 0, policyWindow = 0, policyCount = 0, startWindow = 0, startCount = 0;
     const snapshot = () => voiceEpochFor(room);
     const cooldownKey=()=>{const p=findPlayer(socket.data.playerId);return p?.accountId?'account:'+p.accountId:'socket:'+socket.id;};
@@ -4604,7 +4699,12 @@ function installRoomVoice(socket) {
         const poolKey=voicePoolKey(active.roomId,active.group),slots=roomVoiceSlots.get(poolKey);
         if(slots?.get(active.slot)?.session===active.session){slots.delete(active.slot);if(!slots.size)roomVoiceSlots.delete(poolKey);broadcastVoiceSlots(active.roomId,active.group);}
         for (const id of active.listeners) io.to(id).emit("voiceSpeaker", {roomId:active.roomId, streamId:active.session, session:active.session, epoch:active.epoch, active:false});
+        const finished=active;
         active = null;
+        if(finished.botFrames?.length>=10 && Date.now()-lastBotTranscription>=12000){
+            lastBotTranscription=Date.now();
+            void processBotVoiceUtterance(finished.roomId,finished.playerId,finished.botFrames);
+        }
     }
     function policy() {
         const p = findPlayer(socket.data.playerId);
@@ -4641,7 +4741,8 @@ function installRoomVoice(socket) {
             if(typeof ack==='function')ack({ok:false,message:'Mic này đang bận. Chọn mic khác hoặc chờ.',slots:current.slots});return;
         }
         active={expiresAt:now+VOICE_MAX_HOLD_MS,cooldownKey:cooldownKey(),group,slot:requestedSlot,roomId:room.id,playerId:p.id,channel:data.channel,epoch:current.epoch,
-            session:require("crypto").randomUUID(),listeners:new Set(),last:Date.now(),tokenAt:Date.now(),tokens:24,sequence:-1};
+            session:require("crypto").randomUUID(),listeners:new Set(),last:Date.now(),tokenAt:Date.now(),tokens:24,sequence:-1,
+            botFrames:(BOT_VOICE_STT_ENABLED&&botVoiceConsent&&room.started&&room.phase==='daySpeech'&&p.alive&&room.players.some(b=>b.isBot&&b.alive))?[]:null};
         const grantedSession=active.session;
         active.limitTimer=setTimeout(()=>{if(active?.session===grantedSession)stopVoice();},VOICE_MAX_HOLD_MS);
         active.limitTimer.unref?.();
@@ -4663,6 +4764,7 @@ function installRoomVoice(socket) {
         if(active.tokens<1)return;
         active.tokens-=1;
         active.last=now;active.sequence=data.sequence;
+        if(active.botFrames && active.botFrames.length<150)active.botFrames.push(Buffer.from(data.audio));
         for(const recipient of recipients) {
             if(recipient.id===p.id) continue;
             if(!active.listeners.has(recipient.id)) {
