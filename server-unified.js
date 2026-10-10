@@ -4445,24 +4445,42 @@ function runTestBotDayVote() {
 
 // Test-bot public daytime dialogue. No hidden-role information is consulted.
 // This is deterministic rule-based chatter, not a language model.
+// Free, local-rule bot conversation. Only public chat visible to living players is used.
 function runTestBotDayDialogue() {
     if (!room.started || room.phase !== "daySpeech" || !room.players.some(p=>p.isBot&&p.alive)) return;
-    const dayKey = String(room.nightNumber || 0);
-    if (room._testBotTalkDay === dayKey) return;
-    room._testBotTalkDay = dayKey;
-    const speakers=room.players.filter(p=>p.isBot&&p.alive).slice(0,3);
-    const utterances=[
-        "Mọi người cho mình nghe lý do nghi ngờ trước khi bỏ phiếu nhé.",
-        "Đừng vote vội, ai có thông tin công khai thì chia sẻ đi.",
-        "Mình đang theo dõi cách mọi người lập luận, chưa kết luận ai cả."
-    ];
-    for (let i=0;i<speakers.length;i++){
-        const bot=speakers[i],text=utterances[(i+Number(room.nightNumber||0))%utterances.length];
-        const payload={playerId:bot.id,playerName:bot.name,text,dead:false,wolfChat:false,coupleChat:false,chatType:"public"};
-        const recipients=room.players.filter(p=>p.connected && (p.alive || p.isAdmin));
-        storeChatHistory(payload,recipients);
-        for(const recipient of recipients) io.to(recipient.id).emit("chatMessage",payload);
+    const dayKey=String(room.nightNumber||0);
+    const now=Date.now();
+    if(room._testBotTalkDay!==dayKey){
+        room._testBotTalkDay=dayKey;
+        room._testBotTalkLast=0;
+        room._testBotTalkSeen=0;
+        room._testBotTalkCount=0;
     }
+    if((room._testBotTalkCount||0)>=4 || now-(room._testBotTalkLast||0)<18000)return;
+    const bots=room.players.filter(p=>p.isBot&&p.alive);
+    const visible=(room.chatHistory||[]).filter(m=>m.chatType==='public' && !m.dead && !m.wolfChat && !m.coupleChat);
+    const recent=visible.filter(m=>!String(m.playerId||'').startsWith('BOT-') && m.time>now-90000);
+    const latest=recent.at(-1);
+    if(!latest && room._testBotTalkCount>0)return;
+    if(latest && latest.time<=(room._testBotTalkSeen||0))return;
+    const count=room._testBotTalkCount||0;
+    const bot=bots[count%bots.length];
+    const target=latest?.playerName||'mọi người';
+    const words=String(latest?.text||'').toLocaleLowerCase('vi-VN');
+    // No guesses using hidden role, identity, or private chat.
+    let text;
+    if(!latest)text='Ai có lập luận hay bằng chứng công khai thì chia sẻ để mọi người cùng cân nhắc nhé.';
+    else if(/nghi|sói|wolf/.test(words))text='Mình nghe '+String(target).slice(0,24)+' nghi ngờ rồi. Có chứng cứ từ phiếu bầu hoặc lời nói không?';
+    else if(/vote|phiếu|bỏ phiếu/.test(words))text='Đừng chọn theo số đông vội. Mọi người giải thích lý do đổi phiếu được không?';
+    else if(/tại sao|vì sao|giải thích/.test(words))text='Mình nghĩ nên đối chiếu lời nói với những lượt bỏ phiếu đã công khai.';
+    else text='Mình đã nghe '+String(target).slice(0,24)+' nói. Ai muốn bổ sung ý kiến không?';
+    const payload={playerId:bot.id,playerName:bot.name,text,dead:false,wolfChat:false,coupleChat:false,chatType:'public'};
+    const recipients=room.players.filter(p=>p.connected&&p.alive);
+    storeChatHistory(payload,recipients);
+    for(const recipient of recipients)io.to(recipient.id).emit('chatMessage',payload);
+    room._testBotTalkSeen=latest?.time||now;
+    room._testBotTalkLast=now;
+    room._testBotTalkCount=count+1;
 }
 const testBotTicker = setInterval(() => {
     for (const roomId of ROOM_IDS) {
@@ -4610,7 +4628,7 @@ function voiceChatRecipients(state, player, channel) {
     return null;
 }
 // Voice-to-text bot replies are explicitly opt-in, disabled by default.
-const BOT_VOICE_STT_ENABLED=process.env.BOT_VOICE_STT_ENABLED==='true' && !!process.env.OPENAI_API_KEY;
+const BOT_VOICE_STT_ENABLED=process.env.BOT_VOICE_STT_ENABLED==='true' && process.env.BOT_FREE_ONLY!=='true' && !!process.env.OPENAI_API_KEY;
 function pcm16ToWav(pcm){
     const wav=Buffer.alloc(44+pcm.length);
     wav.write('RIFF',0);wav.writeUInt32LE(36+pcm.length,4);wav.write('WAVEfmt ',8);
